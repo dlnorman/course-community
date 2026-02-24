@@ -1,0 +1,20 @@
+# Database and user-uploaded files — never commit
+data/community.sqlite
+data/uploads/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code session files
+.claude/
+
+# PHP logs
+*.log
+php_errors.txt

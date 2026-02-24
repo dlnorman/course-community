@@ -1,0 +1,31 @@
+# Course Community — Apache rewrite rules
+# Enables clean URLs routed through index.php
+
+RewriteEngine On
+
+# Serve real files and directories directly
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Pass /api/* through to api.php
+RewriteRule ^api/(.*)$ api.php/$1 [L,QSA]
+
+# Pass /lti* through to lti.php
+RewriteRule ^lti(.*)$ lti.php$1 [L,QSA]
+
+# Everything else → index.php (SPA)
+RewriteRule ^(.*)$ index.php [L,QSA]
+
+# Security headers
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# Protect sensitive files
+<FilesMatch "^(config|db)\.php$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
