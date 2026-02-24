@@ -30,7 +30,7 @@ $_ltiTarget = $_appBase . '/';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Course Community — A living learning space for your course</title>
-    <meta name="description" content="An open-source course community platform that integrates with Brightspace via LTI 1.3. Discussion, Q&A, collaboration boards, peer recognition, and more.">
+    <meta name="description" content="An open-source course community platform that integrates with Brightspace via LTI 1.3. Discussion, Q&A, collaboration boards, collaborative documents, peer recognition, and more.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -230,8 +230,8 @@ $_ltiTarget = $_appBase . '/';
             <h1 class="hero-title">A <em>living</em> learning space for your course</h1>
             <p class="hero-desc">
                 Course Community goes beyond the discussion board. It's a full community environment
-                where students and instructors can communicate, collaborate, co-create, give and
-                receive feedback — and make learning visible together.
+                where students and instructors can communicate, collaborate, co-create, write
+                documents together, give and receive feedback — and make learning visible together.
             </p>
             <div class="hero-actions">
                 <a class="btn-hero-primary" href="#install">Deploy it</a>
@@ -263,6 +263,7 @@ $_ltiTarget = $_appBase . '/';
                     <div class="hv-si">📚 Resources</div>
                     <div class="hv-si">🎉 Kudos</div>
                     <div class="hv-si">🧩 Collab</div>
+                    <div class="hv-si">📄 Documents</div>
                     <div class="hv-si">🔁 Peer Review</div>
                     <div class="hv-si">👥 Members</div>
                     <div class="hv-si" style="margin-top:0.5rem">📊 Pulse</div>
@@ -322,6 +323,12 @@ $_ltiTarget = $_appBase . '/';
                 <div class="feature-title">Collaboration Boards</div>
                 <p class="feature-desc">Visual sticky-note boards with drag-and-drop positioning. Perfect for brainstorming, mind-mapping, idea generation, and collecting thinking from the whole class.</p>
                 <span class="feature-tag" style="background:#EEF5F2;color:var(--green)">Collaboration</span>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">📄</div>
+                <div class="feature-title">Collaborative Documents</div>
+                <p class="feature-desc">Shared Markdown documents the whole class can write together. Auto-saves as you type, shows who's currently editing, and detects conflicting changes. Creators can publish a document as read-only and anyone can download the raw Markdown file.</p>
+                <span class="feature-tag" style="background:#EEF5F2;color:var(--green)">Co-authoring</span>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">📚</div>
