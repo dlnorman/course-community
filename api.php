@@ -132,6 +132,13 @@ function route(string $method, array $seg, array $body): void {
         // Analytics
         $s === 'analytics'                            => handleAnalytics(),
 
+        // Documents
+        $s === 'docs' && !$id                                  => handleDocs($method, $body),
+        $s === 'docs' && $id && $sub === 'public'              => handleDocPublic($id, $body),
+        $s === 'docs' && $id && $sub === 'presence'            => handleDocPresence($id),
+        $s === 'docs' && $id && $sub === 'raw'                 => handleDocRaw($id),
+        $s === 'docs' && $id && !$sub                          => handleDoc($method, $id, $body),
+
         // Peer Feedback – sub-routes before catch-all
         $s === 'feedback' && !$id                              => handleFeedbackList($method, $body),
         $s === 'feedback' && $id && $sub === 'publish'         => handleFeedbackTransition($id, 'open'),
@@ -834,6 +841,8 @@ function handleAnalytics(): void {
     $totalComments  = dbOne('SELECT COUNT(*) AS n FROM comments c JOIN posts p ON p.id=c.post_id WHERE p.course_id=?', [$cid]);
     $unresolvedQs   = dbOne('SELECT COUNT(*) AS n FROM posts WHERE course_id=? AND type=\'question\' AND is_resolved=0', [$cid]);
     $postsThisWeek  = dbOne('SELECT COUNT(*) AS n FROM posts WHERE course_id=? AND created_at > ?', [$cid, time() - 604800]);
+    $totalDocs      = dbOne('SELECT COUNT(*) AS n FROM documents WHERE course_id=?', [$cid]);
+    $publishedDocs  = dbOne('SELECT COUNT(*) AS n FROM documents WHERE course_id=? AND is_public=1', [$cid]);
 
     // Top contributors
     $topContributors = dbAll(
@@ -882,6 +891,8 @@ function handleAnalytics(): void {
         'total_comments'    => (int)$totalComments['n'],
         'unresolved_questions' => (int)$unresolvedQs['n'],
         'posts_this_week'   => (int)$postsThisWeek['n'],
+        'total_docs'        => (int)$totalDocs['n'],
+        'published_docs'    => (int)$publishedDocs['n'],
         'top_contributors'  => $topContributors,
         'activity_by_day'   => $activityByDay,
         'space_activity'    => $spaceActivity,
@@ -971,6 +982,155 @@ function coursePayload(array $s): array {
         'label'      => $s['course_label'],
     ];
 }
+
+// ── Documents ─────────────────────────────────────────────────────────────────
+
+function handleDocs(string $method, array $body): void {
+    $s = requireAuth();
+
+    if ($method === 'GET') {
+        $docs = dbAll(
+            'SELECT d.id, d.title, d.is_public, d.version, d.created_by,
+                    d.created_at, d.updated_at, u.name AS creator_name
+             FROM documents d
+             JOIN users u ON u.id = d.created_by
+             WHERE d.course_id = ?
+             ORDER BY d.updated_at DESC',
+            [$s['cid']]
+        );
+        json($docs);
+    } elseif ($method === 'POST') {
+        $title = trim($body['title'] ?? '') ?: 'Untitled Document';
+        $id = dbExec(
+            'INSERT INTO documents (course_id, title, content, created_by) VALUES (?, ?, ?, ?)',
+            [$s['cid'], $title, '', $s['uid']]
+        );
+        $doc = dbOne(
+            'SELECT d.*, u.name AS creator_name FROM documents d JOIN users u ON u.id = d.created_by WHERE d.id = ?',
+            [$id]
+        );
+        json($doc, 201);
+    } else {
+        jsonError(405, 'Method not allowed');
+    }
+}
+
+function handleDoc(string $method, int $id, array $body): void {
+    $s = requireAuth();
+    $doc = dbOne(
+        'SELECT d.*, u.name AS creator_name
+         FROM documents d JOIN users u ON u.id = d.created_by
+         WHERE d.id = ? AND d.course_id = ?',
+        [$id, $s['cid']]
+    );
+    if (!$doc) jsonError(404, 'Document not found');
+
+    if ($method === 'GET') {
+        $editingBy = null;
+        if ($doc['editing_uid'] && $doc['editing_since'] && (time() - (int)$doc['editing_since']) < 120) {
+            if ((int)$doc['editing_uid'] !== $s['uid']) {
+                $eu = dbOne('SELECT name FROM users WHERE id = ?', [$doc['editing_uid']]);
+                if ($eu) $editingBy = $eu['name'];
+            }
+        }
+        json(array_merge($doc, ['editing_by' => $editingBy]));
+
+    } elseif ($method === 'PUT') {
+        // Published docs are read-only for non-owners
+        if ($doc['is_public'] && (int)$s['uid'] !== (int)$doc['created_by'] && $s['role'] !== 'instructor') {
+            jsonError(403, 'This document is published and locked for editing');
+        }
+
+        // Conflict detection: reject if client has a stale version
+        $clientVersion = isset($body['version']) ? (int)$body['version'] : 0;
+        if ($clientVersion && $clientVersion !== (int)$doc['version']) {
+            http_response_code(409);
+            echo json_encode([
+                'error'   => 'Document was updated by someone else. Refresh to see the latest version.',
+                'current' => $doc,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            exit;
+        }
+
+        $title   = trim($body['title']   ?? $doc['title']);
+        $content = $body['content'] ?? $doc['content'];
+
+        dbRun(
+            'UPDATE documents SET title=?, content=?, version=version+1,
+                     editing_uid=?, editing_since=?, updated_at=? WHERE id=?',
+            [$title ?: 'Untitled Document', $content, $s['uid'], time(), time(), $id]
+        );
+        $updated = dbOne(
+            'SELECT d.*, u.name AS creator_name FROM documents d JOIN users u ON u.id = d.created_by WHERE d.id = ?',
+            [$id]
+        );
+        json($updated);
+
+    } elseif ($method === 'DELETE') {
+        if ((int)$s['uid'] !== (int)$doc['created_by'] && $s['role'] !== 'instructor') {
+            jsonError(403, 'Only the creator or an instructor can delete this document');
+        }
+        dbRun('DELETE FROM documents WHERE id = ?', [$id]);
+        json(['ok' => true]);
+
+    } else {
+        jsonError(405, 'Method not allowed');
+    }
+}
+
+function handleDocPublic(int $id, array $body): void {
+    $s = requireAuth();
+    $doc = dbOne('SELECT * FROM documents WHERE id = ? AND course_id = ?', [$id, $s['cid']]);
+    if (!$doc) jsonError(404, 'Document not found');
+
+    if ((int)$s['uid'] !== (int)$doc['created_by'] && $s['role'] !== 'instructor') {
+        jsonError(403, 'Only the creator or an instructor can publish this document');
+    }
+
+    $isPublic = isset($body['is_public']) ? (int)(bool)$body['is_public'] : ((int)$doc['is_public'] ? 0 : 1);
+    dbRun('UPDATE documents SET is_public = ? WHERE id = ?', [$isPublic, $id]);
+    json(['ok' => true, 'is_public' => $isPublic]);
+}
+
+function handleDocPresence(int $id): void {
+    $s = requireAuth();
+    $doc = dbOne('SELECT * FROM documents WHERE id = ? AND course_id = ?', [$id, $s['cid']]);
+    if (!$doc) jsonError(404, 'Document not found');
+
+    // Clear stale presence (> 2 min since last save)
+    if ($doc['editing_uid'] && $doc['editing_since'] && (time() - (int)$doc['editing_since']) >= 120) {
+        dbRun('UPDATE documents SET editing_uid=NULL, editing_since=NULL WHERE id=?', [$id]);
+        $doc['editing_uid']   = null;
+        $doc['editing_since'] = null;
+    }
+
+    $editingBy = null;
+    if ($doc['editing_uid'] && (int)$doc['editing_uid'] !== $s['uid']) {
+        $eu = dbOne('SELECT name FROM users WHERE id = ?', [$doc['editing_uid']]);
+        if ($eu) $editingBy = $eu['name'];
+    }
+
+    json(['version' => (int)$doc['version'], 'editing_by' => $editingBy]);
+}
+
+function handleDocRaw(int $id): void {
+    $s = requireAuth();
+    $doc = dbOne('SELECT * FROM documents WHERE id = ? AND course_id = ?', [$id, $s['cid']]);
+    if (!$doc) jsonError(404, 'Document not found');
+
+    $filename = preg_replace('/[^a-zA-Z0-9_\-]/', '-', $doc['title'] ?: 'document') . '.md';
+    $content  = $doc['content'] ?? '';
+
+    header_remove('Content-Type');
+    header('Content-Type: text/markdown; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Content-Length: ' . strlen($content));
+    header('Cache-Control: no-store');
+    echo $content;
+    exit;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function json(mixed $data, int $code = 200): void {
     http_response_code($code);

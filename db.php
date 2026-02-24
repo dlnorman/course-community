@@ -227,6 +227,22 @@ function initSchema(PDO $db): void {
             FOREIGN KEY (user_id)   REFERENCES users(id),
             FOREIGN KEY (course_id) REFERENCES courses(id)
         );
+
+        CREATE TABLE IF NOT EXISTS documents (
+            id            INTEGER PRIMARY KEY,
+            course_id     INTEGER NOT NULL,
+            title         TEXT    NOT NULL DEFAULT 'Untitled Document',
+            content       TEXT    NOT NULL DEFAULT '',
+            is_public     INTEGER NOT NULL DEFAULT 0,
+            version       INTEGER NOT NULL DEFAULT 1,
+            created_by    INTEGER NOT NULL,
+            editing_uid   INTEGER,
+            editing_since INTEGER,
+            created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            FOREIGN KEY (course_id)  REFERENCES courses(id),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
     ");
 
     // Indexes
@@ -238,6 +254,7 @@ function initSchema(PDO $db): void {
         CREATE INDEX IF NOT EXISTS idx_votes          ON votes(target_type, target_id);
         CREATE INDEX IF NOT EXISTS idx_notifs_user    ON notifications(user_id, course_id, is_read);
         CREATE INDEX IF NOT EXISTS idx_sessions_exp   ON sessions(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_docs_course    ON documents(course_id, updated_at DESC);
     ");
 
     // Peer Feedback Tables

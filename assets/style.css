@@ -1344,6 +1344,227 @@ hr { border: none; border-top: 1px solid var(--border); }
 
 /* ── End Peer Feedback ────────────────────────────────────────────────────── */
 
+/* ── Documents ────────────────────────────────────────────────────────────── */
+
+.doc-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.doc-list-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.doc-list-card:hover {
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.doc-list-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.4rem;
+}
+
+.doc-list-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
+}
+
+.doc-list-meta {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.doc-badge-public {
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: rgba(92, 122, 71, 0.2);
+    color: #7DBF5A;
+    border: 1px solid rgba(92, 122, 71, 0.35);
+    border-radius: 4px;
+    padding: 1px 7px;
+    white-space: nowrap;
+}
+
+/* Editor page */
+.doc-editor-page {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - var(--topbar-h) - 2.5rem);
+    min-height: 500px;
+}
+
+.doc-editor-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.doc-editor-nav {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.doc-editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.doc-save-status {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    min-width: 4rem;
+    text-align: right;
+}
+
+.doc-presence {
+    font-size: 0.8rem;
+    color: var(--accent);
+    background: rgba(200, 75, 16, 0.1);
+    border: 1px solid rgba(200, 75, 16, 0.2);
+    border-radius: 20px;
+    padding: 2px 10px;
+}
+
+.doc-editor-title-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.doc-title-input {
+    flex: 1;
+    font-size: 1.4rem;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-primary);
+    padding: 0.25rem 0;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.doc-title-input:focus {
+    border-bottom-color: var(--accent);
+}
+
+.doc-title-input[readonly] {
+    cursor: default;
+    border-bottom-color: transparent;
+}
+
+.doc-readonly-notice {
+    background: rgba(92, 122, 71, 0.1);
+    border: 1px solid rgba(92, 122, 71, 0.25);
+    border-radius: var(--radius);
+    padding: 0.6rem 1rem;
+    font-size: 0.875rem;
+    color: #7DBF5A;
+    margin-bottom: 0.75rem;
+}
+
+.doc-conflict-notice {
+    background: rgba(231, 76, 60, 0.1);
+    border: 1px solid rgba(231, 76, 60, 0.3);
+    border-radius: var(--radius);
+    padding: 0.6rem 1rem;
+    font-size: 0.875rem;
+    color: #E74C3C;
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.doc-content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* Override EasyMDE styles to match app theme */
+.EasyMDEContainer {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.EasyMDEContainer .CodeMirror {
+    flex: 1;
+    background: var(--bg-card);
+    border-color: var(--border);
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    min-height: 300px;
+}
+
+.EasyMDEContainer .editor-toolbar {
+    background: var(--bg-tint);
+    border-color: var(--border);
+}
+
+.EasyMDEContainer .editor-toolbar button {
+    color: var(--text-secondary);
+}
+
+.EasyMDEContainer .editor-toolbar button:hover,
+.EasyMDEContainer .editor-toolbar button.active {
+    background: var(--bg-card);
+    border-color: var(--border);
+    color: var(--text-primary);
+}
+
+.EasyMDEContainer .editor-toolbar i.separator {
+    border-color: var(--border);
+}
+
+/* Floating exit button for EasyMDE fullscreen/split-view */
+.mde-exit-btn {
+    position: fixed;
+    top: 0.75rem;
+    right: 1rem;
+    z-index: 100000;
+    background: rgba(20, 20, 28, 0.92);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 6px;
+    padding: 0.35rem 0.85rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    transition: background 0.15s;
+    letter-spacing: 0.02em;
+}
+.mde-exit-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+/* ── End Documents ────────────────────────────────────────────────────────── */
+
 @media (max-width: 768px) {
     :root { --sidebar-w: 0px; }
     .app-layout { grid-template-columns: 1fr; }

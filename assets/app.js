@@ -22,7 +22,7 @@ const state = {
     role:           'student',
     spaces:         [],
     currentSpaceId: null,
-    view:           'feed',   // feed | space | post | board | boards | members | profile | analytics | feedback | feedbackDetail | feedbackReview
+    view:           'feed',   // feed | space | post | board | boards | docs | doc | members | profile | analytics | feedback | feedbackDetail | feedbackReview
     viewData:       {},       // extra data for current view
     notifications:  [],
     unreadCount:    0,
@@ -72,6 +72,11 @@ const router = {
     current: '/',
 
     navigate(path) {
+        // Clean up doc editor timers before navigating away
+        if (typeof window._docCleanup === 'function') {
+            window._docCleanup();
+            window._docCleanup = null;
+        }
         history.pushState({}, '', this.base + path);
         this.handle(path);
     },
@@ -99,6 +104,8 @@ const router = {
             if (seg2) return views.feedbackDetail(+seg2);
             return views.feedback();
         }
+        if (seg1 === 'docs')   return views.docs();
+        if (seg1 === 'doc' && seg2) return views.doc(+seg2);
         return views.feed();
     },
 };
@@ -238,6 +245,10 @@ function renderSidebar() {
                 <span class="sidebar-icon">🧩</span>
                 <span>Collaboration Boards</span>
             </div>
+            <div class="sidebar-item ${'docs|doc'.includes(state.view) ? 'active' : ''}" data-nav="/docs">
+                <span class="sidebar-icon">📄</span>
+                <span>Documents</span>
+            </div>
             <div class="sidebar-item ${'feedback|feedbackDetail|feedbackReview'.includes(state.view) ? 'active' : ''}" data-nav="/feedback">
                 <span class="sidebar-icon">🔁</span>
                 <span>Peer Feedback</span>
@@ -280,6 +291,7 @@ function refreshSidebar() {
         const nav = item.dataset.nav;
         if (nav === '/' && state.view === 'feed') item.classList.add('active');
         if (nav === '/boards' && state.view === 'boards') item.classList.add('active');
+        if (nav === '/docs' && (state.view === 'docs' || state.view === 'doc')) item.classList.add('active');
         if (nav === '/members' && state.view === 'members') item.classList.add('active');
         if (nav === '/analytics' && state.view === 'analytics') item.classList.add('active');
         if (item.dataset.spaceId && +item.dataset.spaceId === state.currentSpaceId) item.classList.add('active');
@@ -433,6 +445,38 @@ const views = {
             const board = await api.get(`/api/boards/${boardId}`);
             setView(renderBoardCanvas(board));
             bindBoardCanvasEvents(board);
+        } catch (e) {
+            setView(errorState(e.message));
+        }
+    },
+
+    // ── Documents list ───────────────────────────────────────────
+
+    async docs() {
+        state.view = 'docs';
+        state.currentSpaceId = null;
+        refreshSidebar();
+        setView(loadingInline());
+        try {
+            const docs = await api.get('/api/docs');
+            setView(renderDocsList(docs));
+            bindDocsListEvents();
+        } catch (e) {
+            setView(errorState(e.message));
+        }
+    },
+
+    // ── Document editor ──────────────────────────────────────────
+
+    async doc(docId) {
+        state.view = 'doc';
+        state.currentSpaceId = null;
+        refreshSidebar();
+        setView(loadingInline());
+        try {
+            const doc = await api.get(`/api/docs/${docId}`);
+            setView(renderDocEditor(doc));
+            bindDocEditorEvents(doc);
         } catch (e) {
             setView(errorState(e.message));
         }
@@ -1100,6 +1144,10 @@ function renderAnalytics(data) {
         <div class="stat-card" ${data.unresolved_questions > 0 ? 'style="border-color:var(--warn)"' : ''}>
             <div class="stat-card-value" style="${data.unresolved_questions > 0 ? 'color:var(--warn)' : ''}">${data.unresolved_questions}</div>
             <div class="stat-card-label">Unanswered Questions</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-card-value">${data.total_docs}</div>
+            <div class="stat-card-label">Documents <span style="font-size:0.75em;color:var(--text-muted)">(${data.published_docs} published)</span></div>
         </div>
     </div>
 
@@ -2458,6 +2506,380 @@ function bindReviewEvents(assignmentId, raId, data) {
     });
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// RENDER: DOCUMENTS
+// ═══════════════════════════════════════════════════════════════════
+
+function renderDocsList(docs) {
+    return `
+    <div class="page-header">
+        <div class="page-header-left">
+            <h1 class="page-title">Documents</h1>
+            <p class="page-subtitle">Collaborative Markdown documents for your course</p>
+        </div>
+        <button class="btn btn-primary" id="new-doc-btn">+ New Document</button>
+    </div>
+
+    ${!docs.length
+        ? `<div class="empty-state">
+               <div class="empty-state-icon">📄</div>
+               <div class="empty-state-title">No documents yet</div>
+               <p class="empty-state-text">Create a document to start writing together.</p>
+           </div>`
+        : `<div class="doc-list">
+               ${docs.map(d => `
+               <div class="doc-list-card" onclick="router.navigate('/doc/${d.id}')">
+                   <div class="doc-list-header">
+                       <div class="doc-list-title">${esc(d.title)}</div>
+                       ${d.is_public ? `<span class="doc-badge-public">Published</span>` : ''}
+                   </div>
+                   <div class="doc-list-meta">
+                       <span>by ${esc(d.creator_name)}</span>
+                       <span>v${d.version}</span>
+                       <span style="margin-left:auto">updated ${timeAgo(d.updated_at)}</span>
+                   </div>
+               </div>`).join('')}
+           </div>`
+    }`;
+}
+
+function bindDocsListEvents() {
+    document.getElementById('new-doc-btn')?.addEventListener('click', openNewDocModal);
+}
+
+function openNewDocModal() {
+    openModal(`
+        <div class="modal-header"><h2 class="modal-title">New Document</h2></div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="label">Title</label>
+                <input class="input" id="doc-title-input" type="text" placeholder="Document title…" maxlength="200" autofocus>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="openModal(null)">Cancel</button>
+            <button class="btn btn-primary" id="doc-create-btn">Create Document</button>
+        </div>
+    `);
+    document.getElementById('doc-title-input')?.focus();
+    document.getElementById('doc-create-btn')?.addEventListener('click', async () => {
+        const title = document.getElementById('doc-title-input')?.value.trim() || 'Untitled Document';
+        try {
+            const doc = await api.post('/api/docs', { title });
+            closeModal();
+            router.navigate(`/doc/${doc.id}`);
+        } catch (e) { toast(e.message); }
+    });
+}
+
+// Active document state for the editor
+const docEditorState = {
+    id:          null,
+    version:     0,
+    saveTimer:   null,
+    pollTimer:   null,
+    mde:         null,
+    dirty:       false,
+    saving:      false,
+    isPublic:    false,
+    createdBy:   null,
+};
+
+function renderDocEditor(doc) {
+    const canEdit = !doc.is_public || doc.created_by === state.user?.id || state.role === 'instructor';
+    const isOwner = doc.created_by === state.user?.id || state.role === 'instructor';
+
+    return `
+    <div class="doc-editor-page">
+        <div class="doc-editor-topbar">
+            <div class="doc-editor-nav">
+                <button class="btn btn-ghost btn-sm" onclick="router.navigate('/docs')">← Documents</button>
+                ${doc.editing_by ? `<span class="doc-presence">✏️ ${esc(doc.editing_by)} is editing</span>` : ''}
+            </div>
+            <div class="doc-editor-actions">
+                <span class="doc-save-status" id="doc-save-status"></span>
+                <a id="doc-download-btn"
+                   href="${(window.APP_CONFIG?.baseUrl ?? '')}/api/docs/${doc.id}/raw"
+                   class="btn btn-secondary btn-sm"
+                   download="${esc(doc.title)}.md">⬇ Download</a>
+                ${isOwner ? `
+                <button class="btn btn-sm ${doc.is_public ? 'btn-secondary' : 'btn-ghost'}" id="doc-publish-btn">
+                    ${doc.is_public ? '🔒 Unpublish' : '🌐 Publish'}
+                </button>
+                <button class="btn btn-danger-ghost btn-sm" id="doc-delete-btn">Delete</button>
+                ` : ''}
+            </div>
+        </div>
+
+        <div class="doc-editor-title-row">
+            <input class="doc-title-input" id="doc-title-field" type="text"
+                   value="${esc(doc.title)}" maxlength="200"
+                   placeholder="Document title"
+                   ${canEdit ? '' : 'readonly'}>
+            ${doc.is_public ? `<span class="doc-badge-public">Published — read only for others</span>` : ''}
+        </div>
+
+        ${!canEdit ? `<div class="doc-readonly-notice">📖 This document is published. Only the creator or an instructor can edit it.</div>` : ''}
+
+        <div class="doc-content-area" id="doc-content-area">
+            <textarea id="doc-mde-textarea" ${canEdit ? '' : 'readonly'}>${esc(doc.content)}</textarea>
+        </div>
+    </div>`;
+}
+
+async function loadEasyMDE() {
+    if (window.EasyMDE) return window.EasyMDE;
+    // Load CSS
+    if (!document.getElementById('easymde-css')) {
+        const link = document.createElement('link');
+        link.id   = 'easymde-css';
+        link.rel  = 'stylesheet';
+        link.href = 'https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css';
+        document.head.appendChild(link);
+    }
+    // Load JS
+    await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js';
+        s.onload  = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+    });
+    return window.EasyMDE;
+}
+
+function bindDocEditorEvents(doc) {
+    // Store active doc state
+    docEditorState.id        = doc.id;
+    docEditorState.version   = doc.version;
+    docEditorState.isPublic  = !!doc.is_public;
+    docEditorState.createdBy = doc.created_by;
+    docEditorState.dirty     = false;
+    docEditorState.saving    = false;
+    clearInterval(docEditorState.pollTimer);
+    clearTimeout(docEditorState.saveTimer);
+
+    const canEdit = !doc.is_public || doc.created_by === state.user?.id || state.role === 'instructor';
+
+    // Initialize EasyMDE
+    loadEasyMDE().then(EasyMDE => {
+        if (!document.getElementById('doc-mde-textarea')) return; // view changed
+
+        const mde = new EasyMDE({
+            element: document.getElementById('doc-mde-textarea'),
+            autofocus: canEdit,
+            spellChecker: false,
+            status: false,
+            toolbar: canEdit ? [
+                'bold', 'italic', 'heading', '|',
+                'unordered-list', 'ordered-list', '|',
+                'link', 'image', 'code', 'quote', '|',
+                'preview', 'side-by-side', 'fullscreen',
+            ] : false,
+            renderingConfig: { singleLineBreaks: false },
+        });
+
+        docEditorState.mde = mde;
+
+        // Floating "Exit" button for fullscreen and split-view modes.
+        // EasyMDE adds 'fullscreen' to .EasyMDEContainer (not .CodeMirror).
+        // toggleFullScreen/toggleSideBySide are static methods: EasyMDE.toggleX(instance).
+        const exitObserver = new MutationObserver(() => {
+            const isFull  = !!document.querySelector('.EasyMDEContainer.fullscreen');
+            const isSplit = !!document.querySelector('.editor-preview-active-side');
+            let btn = document.getElementById('mde-exit-btn');
+            if (isFull || isSplit) {
+                if (!btn) {
+                    btn = document.createElement('button');
+                    btn.id = 'mde-exit-btn';
+                    btn.className = 'mde-exit-btn';
+                    btn.innerHTML = '✕ Exit';
+                    btn.title = 'Exit fullscreen / split view (or press Esc)';
+                    btn.addEventListener('click', () => {
+                        if (document.querySelector('.EasyMDEContainer.fullscreen')) {
+                            EasyMDE.toggleFullScreen(mde);
+                        } else if (document.querySelector('.editor-preview-active-side')) {
+                            EasyMDE.toggleSideBySide(mde);
+                        }
+                    });
+                    document.body.appendChild(btn);
+                }
+            } else if (btn) {
+                btn.remove();
+            }
+        });
+        exitObserver.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class'] });
+
+        // Store observer for cleanup
+        docEditorState._exitObserver = exitObserver;
+
+        if (!canEdit) {
+            mde.codemirror.setOption('readOnly', true);
+        } else {
+            mde.codemirror.on('change', () => {
+                docEditorState.dirty = true;
+                clearTimeout(docEditorState.saveTimer);
+                docEditorState.saveTimer = setTimeout(autoSaveDoc, 2000);
+                setDocSaveStatus('');
+            });
+
+            // Title field triggers auto-save too
+            document.getElementById('doc-title-field')?.addEventListener('input', () => {
+                docEditorState.dirty = true;
+                clearTimeout(docEditorState.saveTimer);
+                docEditorState.saveTimer = setTimeout(autoSaveDoc, 2000);
+                setDocSaveStatus('');
+            });
+        }
+
+        // Start polling for remote changes every 10s
+        docEditorState.pollTimer = setInterval(pollDocChanges, 10000);
+    }).catch(() => {
+        // EasyMDE failed to load; fall back to plain textarea
+        const ta = document.getElementById('doc-mde-textarea');
+        if (ta && canEdit) {
+            ta.addEventListener('input', () => {
+                docEditorState.dirty = true;
+                clearTimeout(docEditorState.saveTimer);
+                docEditorState.saveTimer = setTimeout(autoSaveDoc, 2000);
+            });
+        }
+    });
+
+    // Publish toggle
+    document.getElementById('doc-publish-btn')?.addEventListener('click', async () => {
+        try {
+            const res = await api.put(`/api/docs/${doc.id}/public`, {});
+            docEditorState.isPublic = !!res.is_public;
+            const btn = document.getElementById('doc-publish-btn');
+            if (btn) {
+                btn.textContent = res.is_public ? '🔒 Unpublish' : '🌐 Publish';
+                btn.className = `btn btn-sm ${res.is_public ? 'btn-secondary' : 'btn-ghost'}`;
+            }
+            toast(res.is_public ? 'Document published — others can now read it.' : 'Document unpublished.');
+        } catch (e) { toast(e.message); }
+    });
+
+    // Delete
+    document.getElementById('doc-delete-btn')?.addEventListener('click', async () => {
+        if (!confirm('Delete this document permanently?')) return;
+        try {
+            await api.del(`/api/docs/${doc.id}`);
+            router.navigate('/docs');
+        } catch (e) { toast(e.message); }
+    });
+
+    // Clean up timers and observers when navigating away
+    window._docCleanup = () => {
+        clearTimeout(docEditorState.saveTimer);
+        clearInterval(docEditorState.pollTimer);
+        docEditorState._exitObserver?.disconnect();
+        document.getElementById('mde-exit-btn')?.remove();
+        docEditorState.mde = null;
+    };
+}
+
+function setDocSaveStatus(msg) {
+    const el = document.getElementById('doc-save-status');
+    if (el) el.textContent = msg;
+}
+
+async function autoSaveDoc() {
+    if (!docEditorState.dirty || docEditorState.saving) return;
+    if (!document.getElementById('doc-content-area')) return; // view changed
+
+    const title   = document.getElementById('doc-title-field')?.value || 'Untitled Document';
+    const content = docEditorState.mde
+        ? docEditorState.mde.value()
+        : (document.getElementById('doc-mde-textarea')?.value || '');
+
+    docEditorState.saving = true;
+    docEditorState.dirty  = false;
+    setDocSaveStatus('Saving…');
+
+    try {
+        const updated = await api.put(`/api/docs/${docEditorState.id}`, {
+            title,
+            content,
+            version: docEditorState.version,
+        });
+        docEditorState.version = updated.version;
+        setDocSaveStatus('Saved ✓');
+        setTimeout(() => setDocSaveStatus(''), 2000);
+    } catch (e) {
+        if (e.message && e.message.includes('updated by someone else')) {
+            setDocSaveStatus('⚠ Conflict — see notice below');
+            showDocConflictNotice();
+        } else {
+            docEditorState.dirty = true; // retry later
+            setDocSaveStatus('⚠ Save failed');
+        }
+    } finally {
+        docEditorState.saving = false;
+    }
+}
+
+function showDocConflictNotice() {
+    const area = document.getElementById('doc-content-area');
+    if (!area || document.getElementById('doc-conflict-notice')) return;
+    const notice = document.createElement('div');
+    notice.id = 'doc-conflict-notice';
+    notice.className = 'doc-conflict-notice';
+    notice.innerHTML = `⚠ Someone else saved changes while you were editing.
+        Your local changes are preserved below.
+        <button class="btn btn-sm btn-secondary" onclick="views.doc(${docEditorState.id})">Refresh</button>`;
+    area.parentNode.insertBefore(notice, area);
+}
+
+async function pollDocChanges() {
+    if (!document.getElementById('doc-content-area')) {
+        clearInterval(docEditorState.pollTimer);
+        return;
+    }
+    if (docEditorState.dirty || docEditorState.saving) return; // don't interrupt active editing
+
+    try {
+        const data = await api.get(`/api/docs/${docEditorState.id}/presence`);
+
+        // Update presence indicator
+        const nav = document.querySelector('.doc-editor-nav');
+        if (nav) {
+            const existing = nav.querySelector('.doc-presence');
+            if (data.editing_by) {
+                if (existing) {
+                    existing.textContent = `✏️ ${data.editing_by} is editing`;
+                } else {
+                    const span = document.createElement('span');
+                    span.className = 'doc-presence';
+                    span.textContent = `✏️ ${data.editing_by} is editing`;
+                    nav.appendChild(span);
+                }
+            } else if (existing) {
+                existing.remove();
+            }
+        }
+
+        // If version changed and we're not dirty, reload content silently
+        if (data.version > docEditorState.version && !docEditorState.dirty) {
+            const updated = await api.get(`/api/docs/${docEditorState.id}`);
+            docEditorState.version = updated.version;
+            if (docEditorState.mde) {
+                const cursor = docEditorState.mde.codemirror.getCursor();
+                docEditorState.mde.value(updated.content || '');
+                docEditorState.mde.codemirror.setCursor(cursor);
+            }
+            const titleField = document.getElementById('doc-title-field');
+            if (titleField && document.activeElement !== titleField) {
+                titleField.value = updated.title;
+            }
+            setDocSaveStatus('Updated by ' + (updated.creator_name || 'another user'));
+            setTimeout(() => setDocSaveStatus(''), 3000);
+        }
+    } catch (_) {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Make key functions global for inline handlers
 window.openCompose      = openCompose;
 window.openModal        = openModal;
@@ -2470,6 +2892,7 @@ window.addPollOption    = addPollOption;
 window.removePollOption = removePollOption;
 window.submitNewBoard   = submitNewBoard;
 window.submitCard       = submitCard;
+window.openNewDocModal  = openNewDocModal;
 
 // ── Start ─────────────────────────────────────────────────────────
 init();

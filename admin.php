@@ -146,6 +146,7 @@ function adminDeleteCourse(int $id): void
           WHERE board_id IN (SELECT id FROM boards WHERE course_id = ?)'
     )->execute([$id]);
 
+    $db->prepare('DELETE FROM documents    WHERE course_id = ?')->execute([$id]);
     $db->prepare('DELETE FROM boards       WHERE course_id = ?')->execute([$id]);
     $db->prepare('DELETE FROM posts        WHERE course_id = ?')->execute([$id]);
     $db->prepare('DELETE FROM spaces       WHERE course_id = ?')->execute([$id]);
