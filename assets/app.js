@@ -108,6 +108,7 @@ const router = {
         if (seg1 === 'docs')   return views.docs();
         if (seg1 === 'doc' && seg2) return views.doc(+seg2);
         if (seg1 === 'moderation') return views.moderation();
+        if (seg1 === 'invites')    return views.invites();
         return views.feed();
     },
 };
@@ -193,16 +194,52 @@ function renderTopbar() {
                 🔔
                 ${state.unreadCount > 0 ? `<span class="notif-badge" id="notif-badge">${state.unreadCount}</span>` : '<span class="notif-badge" id="notif-badge" style="display:none"></span>'}
             </button>
-            <button class="avatar-btn" id="my-profile-btn" aria-label="My profile">
-                ${avatarEl(state.user, 34)}
-            </button>
+            <div class="account-menu-wrap" id="account-menu-wrap">
+                <button class="avatar-btn" id="my-profile-btn" aria-label="My account" aria-expanded="false" aria-haspopup="true">
+                    ${avatarEl(state.user, 34)}
+                </button>
+                <div class="account-dropdown" id="account-dropdown" hidden>
+                    <div class="account-dropdown-name">${esc(state.user.name || state.user.email || 'Account')}</div>
+                    <button class="account-dropdown-item" id="acct-profile-btn">My Profile</button>
+                    <div class="account-dropdown-divider"></div>
+                    <button class="account-dropdown-item account-dropdown-signout" id="acct-signout-btn">Sign out</button>
+                </div>
+            </div>
         </div>
     </header>`;
 }
 
 function bindTopbar() {
     document.getElementById('notif-btn').addEventListener('click', toggleNotifPanel);
-    document.getElementById('my-profile-btn').addEventListener('click', () => views.profile(state.user.id));
+
+    const wrap    = document.getElementById('account-menu-wrap');
+    const btn     = document.getElementById('my-profile-btn');
+    const dropdown = document.getElementById('account-dropdown');
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = !dropdown.hidden;
+        dropdown.hidden = open;
+        btn.setAttribute('aria-expanded', String(!open));
+    });
+
+    document.addEventListener('click', () => {
+        if (!dropdown.hidden) {
+            dropdown.hidden = true;
+            btn.setAttribute('aria-expanded', 'false');
+        }
+    });
+
+    document.getElementById('acct-profile-btn').addEventListener('click', () => {
+        dropdown.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+        views.profile(state.user.id);
+    });
+
+    document.getElementById('acct-signout-btn').addEventListener('click', async () => {
+        await api.del('/api/session');
+        window.location.href = (window.APP_CONFIG?.baseUrl ?? '') + '/';
+    });
 }
 
 function updateNotifBadge() {
@@ -285,6 +322,12 @@ function renderSidebar() {
                 <span class="sidebar-icon" aria-hidden="true">🛡️</span>
                 <span>Moderation</span>
             </div>
+            ${state.course?.course_type === 'standalone' ? `
+            <div class="sidebar-item ${state.view === 'invites' ? 'active' : ''}" data-nav="/invites"
+                 tabindex="0" role="button" ${state.view === 'invites' ? 'aria-current="page"' : ''}>
+                <span class="sidebar-icon" aria-hidden="true">🔑</span>
+                <span>Invite Codes</span>
+            </div>` : ''}
         </div>` : ''}
     </nav>`;
 }
@@ -1133,9 +1176,19 @@ function renderBoardCanvas(board) {
 }
 
 function renderStickyCard(card) {
+    const canEdit = state.role === 'instructor' || card.author_id === state.user?.id;
     return `
     <div class="sticky-card" data-card-id="${card.id}"
          style="left:${card.pos_x}px;top:${card.pos_y}px;background:${esc(card.color)}">
+        ${canEdit ? `
+        <div class="sticky-menu-wrap">
+            <button class="sticky-menu-btn" aria-label="Card options"
+                    onclick="event.stopPropagation();toggleCardMenu(${card.id})">⋯</button>
+            <div class="sticky-menu" id="card-menu-${card.id}" hidden>
+                <button onclick="event.stopPropagation();openEditCardModal(${card.id})">Edit</button>
+                <button class="sticky-menu-delete" onclick="event.stopPropagation();deleteCard(${card.id})">Delete</button>
+            </div>
+        </div>` : ''}
         <div class="sticky-content">${esc(card.content)}</div>
         <div class="sticky-footer">
             <span class="sticky-author">${esc(card.author_given || card.author_name || '')}</span>
@@ -1156,7 +1209,7 @@ function bindBoardCanvasEvents(board) {
 
     canvas.addEventListener('mousedown', e => {
         const card = e.target.closest('.sticky-card');
-        if (!card || e.target.closest('.sticky-vote-btn')) return;
+        if (!card || e.target.closest('.sticky-vote-btn') || e.target.closest('.sticky-menu-wrap')) return;
         e.preventDefault();
         dragging = card;
         card.classList.add('dragging');
@@ -1662,6 +1715,81 @@ async function submitCard(boardId) {
         toast('Card added!');
     } catch (e) { toast(e.message); }
 }
+
+window.toggleCardMenu = (cardId) => {
+    // Close any other open menus first
+    document.querySelectorAll('.sticky-menu:not([hidden])').forEach(m => {
+        if (m.id !== `card-menu-${cardId}`) m.hidden = true;
+    });
+    const menu = document.getElementById(`card-menu-${cardId}`);
+    if (menu) menu.hidden = !menu.hidden;
+};
+document.addEventListener('click', () => {
+    document.querySelectorAll('.sticky-menu').forEach(m => { m.hidden = true; });
+});
+
+window.openEditCardModal = (cardId) => {
+    const cardEl = document.querySelector(`.sticky-card[data-card-id="${cardId}"]`);
+    if (!cardEl) return;
+    const content = cardEl.querySelector('.sticky-content')?.textContent ?? '';
+    const currentColor = cardEl.style.background || '#FFF9C4';
+    const boardId = document.getElementById('board-canvas')?.dataset.boardId;
+    const colors = ['#FFF9C4','#FFE0B2','#F8BBD0','#DCEDC8','#B3E5FC','#E1BEE7','#B2DFDB'];
+
+    openModal(`
+    <div class="modal-header">
+        <div class="modal-title">Edit Card</div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+        <div class="form-group">
+            <label class="form-label">Content</label>
+            <textarea class="form-textarea" id="edit-card-content" style="min-height:120px">${esc(content)}</textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Card colour</label>
+            <div style="display:flex;gap:0.5rem">
+                ${colors.map(c => `
+                <button class="color-dot" data-color="${c}"
+                        style="width:28px;height:28px;border-radius:50%;background:${c};border:2px solid ${c === currentColor ? '#333' : 'transparent'};cursor:pointer"
+                        onclick="document.querySelectorAll('.color-dot').forEach(d=>d.style.border='2px solid transparent');this.style.border='2px solid #333';window._editCardColor='${c}'">
+                </button>`).join('')}
+            </div>
+        </div>
+    </div>
+    <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitEditCard(${cardId})">Save</button>
+    </div>`);
+    window._editCardColor = currentColor;
+};
+
+window.submitEditCard = async (cardId) => {
+    const content = document.getElementById('edit-card-content')?.value.trim();
+    if (!content) { toast('Content cannot be empty'); return; }
+    try {
+        const updated = await api.put(`/api/cards/${cardId}`, {
+            content,
+            color: window._editCardColor,
+        });
+        closeModal();
+        const cardEl = document.querySelector(`.sticky-card[data-card-id="${cardId}"]`);
+        if (cardEl) {
+            cardEl.style.background = updated.color;
+            cardEl.querySelector('.sticky-content').textContent = updated.content;
+        }
+        toast('Card updated');
+    } catch (e) { toast(e.message); }
+};
+
+window.deleteCard = async (cardId) => {
+    if (!confirm('Delete this card?')) return;
+    try {
+        await api.del(`/api/cards/${cardId}`);
+        document.querySelector(`.sticky-card[data-card-id="${cardId}"]`)?.remove();
+        toast('Card deleted');
+    } catch (e) { toast(e.message); }
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // EVENT HANDLERS
@@ -3356,6 +3484,124 @@ window.performModAction = performModAction;
 window.quickModAction   = quickModAction;
 window.dismissFlags     = dismissFlags;
 window.loadModerationAuditLog = loadModerationAuditLog;
+
+// ── Invite Codes (instructor, standalone courses only) ─────────────
+
+views.invites = async function() {
+    if (state.role !== 'instructor') { router.navigate('/'); return; }
+    state.view = 'invites';
+    refreshSidebar();
+    const content = document.getElementById('view-content');
+    content.innerHTML = `
+        <div class="mod-panel">
+            <div class="mod-panel-header">
+                <h1 class="page-title">🔑 Invite Codes</h1>
+                <button class="btn btn-primary btn-sm" onclick="openNewInviteModal()">+ Create Code</button>
+            </div>
+            <div id="invite-list">${loadingInline()}</div>
+        </div>`;
+    await loadInviteCodes();
+};
+
+async function loadInviteCodes() {
+    try {
+        const codes = await api.get('/api/invite-codes');
+        const el = document.getElementById('invite-list');
+        if (!el) return;
+        if (!codes.length) {
+            el.innerHTML = '<p style="color:var(--text-secondary);font-size:0.9rem;padding:1.5rem 0;">No active invite codes. Create one to share with students.</p>';
+            return;
+        }
+        el.innerHTML = `
+            <table class="pf-table" style="width:100%">
+                <thead><tr>
+                    <th>Code</th><th>Role</th><th>Label</th>
+                    <th style="text-align:right">Uses</th><th>Expires</th><th></th>
+                </tr></thead>
+                <tbody>
+                ${codes.map(c => `
+                    <tr>
+                        <td><code style="font-family:monospace;font-size:1rem;letter-spacing:0.08em;font-weight:600;">${esc(c.code)}</code></td>
+                        <td><span class="tag">${esc(c.role)}</span></td>
+                        <td style="color:var(--text-secondary);font-size:0.85rem;">${esc(c.label || '—')}</td>
+                        <td style="text-align:right;font-family:monospace;">${c.use_count}${c.max_uses ? ' / ' + c.max_uses : ''}</td>
+                        <td style="font-size:0.82rem;color:var(--text-secondary);">${c.expires_at ? new Date(c.expires_at * 1000).toLocaleDateString() : 'Never'}</td>
+                        <td style="text-align:right;">
+                            <button class="btn btn-ghost btn-sm" onclick="deactivateCode(${c.id})">Deactivate</button>
+                        </td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>`;
+    } catch (e) {
+        const el = document.getElementById('invite-list');
+        if (el) el.innerHTML = `<p class="error-msg">${esc(e.message)}</p>`;
+    }
+}
+
+function openNewInviteModal() {
+    openModal(`
+        <h2 class="modal-title" style="margin-bottom:1rem">🔑 Create Invite Code</h2>
+        <div class="form-group">
+            <label class="form-label">Role</label>
+            <select id="inv-role" class="form-input">
+                <option value="student">Student</option>
+                <option value="instructor">Instructor</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Label <span style="font-weight:400;color:var(--text-secondary)">(optional note)</span></label>
+            <input id="inv-label" type="text" class="form-input" placeholder="e.g. Spring cohort">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Expiry Date <span style="font-weight:400;color:var(--text-secondary)">(optional)</span></label>
+            <input id="inv-expires" type="date" class="form-input">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Max Uses <span style="font-weight:400;color:var(--text-secondary)">(optional, leave blank for unlimited)</span></label>
+            <input id="inv-maxuses" type="number" class="form-input" min="1" placeholder="Unlimited">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1.5rem">
+            <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitNewInvite()">Create Code</button>
+        </div>
+    `);
+}
+
+async function submitNewInvite() {
+    const role     = document.getElementById('inv-role').value;
+    const label    = document.getElementById('inv-label').value.trim();
+    const expiresStr = document.getElementById('inv-expires').value;
+    const maxUses  = document.getElementById('inv-maxuses').value;
+    const expiresAt = expiresStr ? Math.floor(new Date(expiresStr).getTime() / 1000) : null;
+    try {
+        await api.post('/api/invite-codes', {
+            role,
+            label,
+            expires_at: expiresAt,
+            max_uses:   maxUses ? parseInt(maxUses) : null,
+        });
+        closeModal();
+        toast('Invite code created.');
+        await loadInviteCodes();
+    } catch (e) {
+        toast(e.message, 'error');
+    }
+}
+
+async function deactivateCode(id) {
+    if (!confirm('Deactivate this invite code? It can no longer be used.')) return;
+    try {
+        await api.del(`/api/invite-codes/${id}`);
+        toast('Invite code deactivated.');
+        await loadInviteCodes();
+    } catch (e) {
+        toast(e.message, 'error');
+    }
+}
+
+window.openNewInviteModal = openNewInviteModal;
+window.submitNewInvite    = submitNewInvite;
+window.deactivateCode     = deactivateCode;
 
 // ── Start ─────────────────────────────────────────────────────────
 init();

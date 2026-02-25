@@ -218,10 +218,20 @@ $_ltiTarget = $_appBase . '/';
             <a href="#design">Principles</a>
             <a href="#integration">LTI Setup</a>
             <a href="#install">Install</a>
-            <a class="nav-cta" href="#install">Get Started</a>
+            <a href="<?= $_appBase ?>/auth.php?action=login" style="color:#EEF0F8;">Sign in</a>
+            <a class="nav-cta" href="<?= $_appBase ?>/auth.php?action=join">Join a course</a>
         </div>
     </div>
 </nav>
+
+<!-- returning-user banner -->
+<div style="background:var(--accent-t);border-bottom:1px solid rgba(200,75,16,0.18);padding:0.75rem 2rem;text-align:center;font-size:0.875rem;color:var(--text);">
+    Already enrolled in a course?
+    <a href="<?= $_appBase ?>/auth.php?action=login" style="color:var(--accent);font-weight:700;margin-left:0.4rem;">Sign in with a magic link →</a>
+    &nbsp;·&nbsp;
+    Have an invite code?
+    <a href="<?= $_appBase ?>/auth.php?action=join" style="color:var(--accent);font-weight:700;margin-left:0.4rem;">Join here →</a>
+</div>
 
 <!-- ── Hero ──────────────────────────────────────────────────────────── -->
 <section class="hero">
@@ -825,6 +835,8 @@ RewriteRule ^(.*)$              /index.php [L,QSA]
             <a href="#features">Features</a>
             <a href="#integration">LTI Guide</a>
             <a href="#install">Install</a>
+            <a href="<?= $_appBase ?>/auth.php?action=login">Sign in</a>
+            <a href="<?= $_appBase ?>/auth.php?action=join">Join a course</a>
         </div>
         <div class="footer-copy">Open source · PHP + SQLite · LTI 1.3</div>
     </div>

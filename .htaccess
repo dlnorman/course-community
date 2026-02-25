@@ -14,7 +14,7 @@ RewriteRule ^api/(.*)$ api.php/$1 [L,QSA]
 # Pass /lti* through to lti.php
 RewriteRule ^lti(.*)$ lti.php$1 [L,QSA]
 
-# Everything else → index.php (SPA)
+# Everything else (including /auth/*, /join, /login) → index.php (SPA)
 RewriteRule ^(.*)$ index.php [L,QSA]
 
 # Security headers
@@ -25,7 +25,14 @@ RewriteRule ^(.*)$ index.php [L,QSA]
 </IfModule>
 
 # Protect sensitive files
-<FilesMatch "^(config|db)\.php$">
+<FilesMatch "^(config|config\.example|db)\.php$">
     Order allow,deny
     Deny from all
 </FilesMatch>
+
+# Protect the data directory (database, uploads, logs)
+<IfModule mod_authz_core.c>
+    <DirectoryMatch "data/">
+        Require all denied
+    </DirectoryMatch>
+</IfModule>

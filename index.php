@@ -26,6 +26,13 @@ if (str_starts_with($_relUri, '/lti')) {
     exit;
 }
 
+// ── Standalone auth routes (always accessible) ────────────────────────────────
+
+if ($_relUri === '/join' || str_starts_with($_relUri, '/auth/')) {
+    require __DIR__ . '/auth.php';
+    exit;
+}
+
 // ── Check auth ────────────────────────────────────────────────────────────────
 
 $sid = $_COOKIE['cc_session'] ?? '';
@@ -54,6 +61,12 @@ if (!$authed && preg_match('#^/doc/(\d+)$#', $_relUri, $_docMatch)) {
         exit;
     }
     // Not a public doc — fall through to landing
+}
+
+if ($_relUri === '/login') {
+    if ($authed) { header('Location: ' . APP_URL . '/'); exit; }
+    require __DIR__ . '/auth.php';
+    exit;
 }
 
 if (!$authed) {

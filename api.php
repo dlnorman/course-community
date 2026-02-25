@@ -21,7 +21,8 @@ function requireAuth(): array {
 
     $session = dbOne(
         'SELECT s.*, u.id AS uid, u.name, u.given_name, u.family_name, u.email, u.picture, u.bio,
-                c.id AS cid, c.context_id, c.title AS course_title, c.label AS course_label
+                c.id AS cid, c.context_id, c.title AS course_title, c.label AS course_label,
+                c.course_type
          FROM sessions s
          JOIN users u   ON u.id = s.user_id
          JOIN courses c ON c.id = s.course_id
@@ -31,8 +32,9 @@ function requireAuth(): array {
 
     if (!$session) jsonError(401, 'Session expired. Please relaunch from your course.');
 
-    // Renew session
-    dbRun('UPDATE sessions SET expires_at = ? WHERE id = ?', [time() + SESSION_DURATION, $sid]);
+    // Renew session — standalone sessions get 30 days, LTI sessions get 8 hours
+    $dur = ($session['course_type'] === 'standalone') ? STANDALONE_SESSION_DURATION : SESSION_DURATION;
+    dbRun('UPDATE sessions SET expires_at = ? WHERE id = ?', [time() + $dur, $sid]);
 
     return $session;
 }
@@ -46,7 +48,8 @@ function optionalAuth(): ?array {
     if (!$sid) return null;
     $session = dbOne(
         'SELECT s.*, u.id AS uid, u.name, u.given_name, u.family_name, u.email, u.picture, u.bio,
-                c.id AS cid, c.context_id, c.title AS course_title, c.label AS course_label
+                c.id AS cid, c.context_id, c.title AS course_title, c.label AS course_label,
+                c.course_type
          FROM sessions s
          JOIN users u   ON u.id = s.user_id
          JOIN courses c ON c.id = s.course_id
@@ -54,7 +57,8 @@ function optionalAuth(): ?array {
         [$sid, time()]
     );
     if ($session) {
-        dbRun('UPDATE sessions SET expires_at = ? WHERE id = ?', [time() + SESSION_DURATION, $sid]);
+        $dur = ($session['course_type'] === 'standalone') ? STANDALONE_SESSION_DURATION : SESSION_DURATION;
+        dbRun('UPDATE sessions SET expires_at = ? WHERE id = ?', [time() + $dur, $sid]);
     }
     return $session ?: null;
 }
@@ -185,6 +189,9 @@ function route(string $method, array $seg, array $body): void {
         // Moderation log
         $s === 'moderation-log' && $method === 'GET'           => handleModerationLog(),
 
+        // Invite codes (standalone courses)
+        $s === 'invite-codes'                                  => handleInviteCodes($method, $id, $body),
+
         default => jsonError(404, 'Not found'),
     };
 }
@@ -192,6 +199,20 @@ function route(string $method, array $seg, array $body): void {
 // ── Session ───────────────────────────────────────────────────────────────────
 
 function handleSession(string $method): void {
+    if ($method === 'DELETE') {
+        $sid = $_COOKIE['cc_session'] ?? '';
+        if ($sid) {
+            dbRun('DELETE FROM sessions WHERE id = ?', [$sid]);
+            setcookie('cc_session', '', [
+                'expires'  => time() - 3600,
+                'path'     => '/',
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+        }
+        json(['ok' => true]);
+        return;
+    }
     $s = requireAuth();
     json(['user' => userPayload($s), 'course' => coursePayload($s), 'role' => $s['role']]);
 }
@@ -1013,10 +1034,11 @@ function userPayload(array $s): array {
 
 function coursePayload(array $s): array {
     return [
-        'id'         => $s['cid'],
-        'context_id' => $s['context_id'],
-        'title'      => $s['course_title'],
-        'label'      => $s['course_label'],
+        'id'          => $s['cid'],
+        'context_id'  => $s['context_id'],
+        'title'       => $s['course_title'],
+        'label'       => $s['course_label'],
+        'course_type' => $s['course_type'] ?? 'lti',
     ];
 }
 
@@ -1530,6 +1552,63 @@ function handleModerationLog(): void {
     unset($row);
 
     json($rows);
+}
+
+// ── Invite Codes ──────────────────────────────────────────────────────────────
+
+function handleInviteCodes(string $method, int $id, array $body): void {
+    $s = requireAuth();
+
+    if ($method === 'GET' && !$id) {
+        // List active codes for this course
+        requireInstructor($s);
+        $codes = dbAll(
+            'SELECT ic.*, u.name AS creator_name
+               FROM course_invite_codes ic
+               JOIN users u ON u.id = ic.created_by
+              WHERE ic.course_id = ? AND ic.is_active = 1
+              ORDER BY ic.created_at DESC',
+            [$s['cid']]
+        );
+        json($codes);
+    } elseif ($method === 'POST' && !$id) {
+        // Create a new invite code
+        requireInstructor($s);
+        $role      = in_array($body['role'] ?? '', ['student', 'instructor']) ? $body['role'] : 'student';
+        $label     = trim($body['label'] ?? '');
+        $expiresAt = isset($body['expires_at']) && $body['expires_at'] ? (int)$body['expires_at'] : null;
+        $maxUses   = isset($body['max_uses'])   && $body['max_uses']   ? (int)$body['max_uses']   : null;
+
+        // Generate an 8-char uppercase alphanumeric code
+        $code = generateInviteCode();
+
+        $codeId = dbExec(
+            'INSERT INTO course_invite_codes (course_id, code, role, label, created_by, expires_at, max_uses)
+             VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [$s['cid'], $code, $role, $label, $s['uid'], $expiresAt, $maxUses]
+        );
+
+        json(dbOne('SELECT * FROM course_invite_codes WHERE id = ?', [$codeId]));
+    } elseif ($method === 'DELETE' && $id) {
+        // Deactivate a code
+        requireInstructor($s);
+        $existing = dbOne('SELECT * FROM course_invite_codes WHERE id = ? AND course_id = ?', [$id, $s['cid']]);
+        if (!$existing) jsonError(404, 'Invite code not found');
+        dbRun('UPDATE course_invite_codes SET is_active = 0 WHERE id = ?', [$id]);
+        json(['ok' => true]);
+    } else {
+        jsonError(405, 'Method not allowed');
+    }
+}
+
+function generateInviteCode(): string {
+    $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous chars I/1/O/0
+    $code  = '';
+    $bytes = random_bytes(8);
+    for ($i = 0; $i < 8; $i++) {
+        $code .= $chars[ord($bytes[$i]) % strlen($chars)];
+    }
+    return $code;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

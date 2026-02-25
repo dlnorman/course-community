@@ -1,6 +1,10 @@
-# Database and user-uploaded files — never commit
+# Local config — contains secrets, must not be overwritten by git pulls
+config.php
+
+# Database, uploads, and logs — never commit
 data/community.sqlite
 data/uploads/
+data/auth.log
 
 # OS
 .DS_Store

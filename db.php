@@ -269,6 +269,33 @@ function initSchema(PDO $db): void {
             note        TEXT    NOT NULL DEFAULT '',
             created_at  INTEGER NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS course_invite_codes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            course_id  INTEGER NOT NULL,
+            code       TEXT    NOT NULL UNIQUE,
+            role       TEXT    NOT NULL DEFAULT 'student',
+            label      TEXT    NOT NULL DEFAULT '',
+            created_by INTEGER NOT NULL,
+            expires_at INTEGER,
+            max_uses   INTEGER,
+            use_count  INTEGER NOT NULL DEFAULT 0,
+            is_active  INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            FOREIGN KEY (course_id)  REFERENCES courses(id),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS local_auth_tokens (
+            token      TEXT    PRIMARY KEY,
+            user_id    INTEGER NOT NULL,
+            course_id  INTEGER,
+            expires_at INTEGER NOT NULL,
+            used_at    INTEGER,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            FOREIGN KEY (user_id)  REFERENCES users(id),
+            FOREIGN KEY (course_id) REFERENCES courses(id)
+        );
     ");
 
     // Indexes
@@ -284,6 +311,8 @@ function initSchema(PDO $db): void {
         CREATE INDEX IF NOT EXISTS idx_flags_target   ON flags(target_type, target_id, status);
         CREATE INDEX IF NOT EXISTS idx_flags_course   ON flags(course_id, status);
         CREATE INDEX IF NOT EXISTS idx_modlog_course  ON moderation_log(course_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_invite_course  ON course_invite_codes(course_id, is_active);
+        CREATE INDEX IF NOT EXISTS idx_auth_tokens    ON local_auth_tokens(expires_at);
     ");
 
     // Peer Feedback Tables
@@ -438,6 +467,15 @@ function migrateSchema(PDO $db): void {
         $db->exec('PRAGMA foreign_keys=ON');
     }
 
+    // ── Migration: add course_type to courses ───────────────────────────────────
+    $courseCols2 = array_column(
+        $db->query('PRAGMA table_info(courses)')->fetchAll(PDO::FETCH_ASSOC),
+        'name'
+    );
+    if (!in_array('course_type', $courseCols2)) {
+        $db->exec("ALTER TABLE courses ADD COLUMN course_type TEXT NOT NULL DEFAULT 'lti'");
+    }
+
     // ── Migration: add moderation columns to posts and comments ─────────────────
     foreach (['posts', 'comments'] as $t) {
         $cols = array_column(
@@ -513,5 +551,16 @@ function notify(int $userId, int $courseId, string $type, string $message, strin
     dbExec(
         'INSERT INTO notifications (user_id, course_id, type, message, link) VALUES (?, ?, ?, ?, ?)',
         [$userId, $courseId, $type, $message, $link]
+    );
+}
+
+// ── Standalone course helper ───────────────────────────────────────────────────
+
+function createStandaloneCourse(string $title, string $label = ''): int {
+    $contextId = bin2hex(random_bytes(16)); // 32-char UUID-like identifier
+    return dbExec(
+        "INSERT INTO courses (issuer, context_id, title, label, course_type)
+         VALUES ('standalone', ?, ?, ?, 'standalone')",
+        [$contextId, $title, $label]
     );
 }

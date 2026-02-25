@@ -8,6 +8,8 @@
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
+define('AUTH_FUNCTIONS_ONLY', true);  // load auth helpers without running the router
+require_once __DIR__ . '/auth.php';
 
 // ── Admin auth (separate PHP session, isolated from app sessions) ─────────────
 
@@ -41,6 +43,66 @@ if ($action === 'logout') {
 }
 
 if ($authed) {
+
+    if ($action === 'create_standalone_course') {
+        $title = trim($_POST['sa_title'] ?? '');
+        $label = trim($_POST['sa_label'] ?? '');
+        if ($title) {
+            $newCourseId = createStandaloneCourse($title, $label);
+            ensureDefaultSpaces($newCourseId);
+            $message = "Standalone course \"" . htmlspecialchars($title) . "\" created (ID: $newCourseId).";
+        } else {
+            $message = 'Error: Course title is required.';
+        }
+    }
+
+    if ($action === 'set_standalone_instructor') {
+        $courseId  = (int)($_POST['sa_course_id'] ?? 0);
+        $instrEmail = strtolower(trim($_POST['sa_email'] ?? ''));
+        $instrName  = trim($_POST['sa_name'] ?? '');
+        if ($courseId && filter_var($instrEmail, FILTER_VALIDATE_EMAIL)) {
+            // Upsert instructor user
+            $existing = dbOne("SELECT id FROM users WHERE sub = ? AND issuer = 'standalone'", [$instrEmail]);
+            if ($existing) {
+                $instrId = (int)$existing['id'];
+                if ($instrName) {
+                    dbRun("UPDATE users SET name = ?, given_name = ? WHERE id = ?",
+                        [$instrName, explode(' ', $instrName)[0], $instrId]);
+                }
+            } else {
+                $parts  = explode(' ', $instrName ?: $instrEmail, 2);
+                $instrId = dbExec(
+                    "INSERT INTO users (sub, issuer, name, given_name, family_name, email)
+                     VALUES (?, 'standalone', ?, ?, ?, ?)",
+                    [$instrEmail, $instrName ?: $instrEmail, $parts[0], $parts[1] ?? '', $instrEmail]
+                );
+            }
+            // Enroll as instructor
+            $enrolled = dbOne('SELECT id FROM enrollments WHERE user_id = ? AND course_id = ?', [$instrId, $courseId]);
+            if ($enrolled) {
+                dbRun('UPDATE enrollments SET role = ? WHERE user_id = ? AND course_id = ?',
+                    ['instructor', $instrId, $courseId]);
+            } else {
+                dbExec('INSERT INTO enrollments (user_id, course_id, role) VALUES (?, ?, ?)',
+                    [$instrId, $courseId, 'instructor']);
+            }
+            // Generate 7-day magic link
+            $token = bin2hex(random_bytes(24));
+            dbExec(
+                'INSERT INTO local_auth_tokens (token, user_id, course_id, expires_at) VALUES (?, ?, ?, ?)',
+                [$token, $instrId, $courseId, time() + 604800]
+            );
+            $magicLink = rtrim(APP_URL, '/') . '/auth.php?action=magic&token=' . urlencode($token);
+            authSendMagicLink($instrEmail, $instrName ?: $instrEmail, $magicLink);
+            $message = 'Instructor enrolled. A magic-link email has been sent to '
+                . htmlspecialchars($instrEmail) . '. '
+                . 'You can also share this one-time link directly (valid 7 days):<br>'
+                . '<code style="font-family:monospace;font-size:12px;word-break:break-all;">'
+                . htmlspecialchars($magicLink) . '</code>';
+        } else {
+            $message = 'Error: Valid course and email required.';
+        }
+    }
 
     if ($action === 'delete_course') {
         $courseId = (int)($_POST['course_id'] ?? 0);
@@ -146,6 +208,7 @@ function adminDeleteCourse(int $id): void
           WHERE board_id IN (SELECT id FROM boards WHERE course_id = ?)'
     )->execute([$id]);
 
+    $db->prepare('DELETE FROM course_invite_codes WHERE course_id = ?')->execute([$id]);
     $db->prepare('DELETE FROM documents    WHERE course_id = ?')->execute([$id]);
     $db->prepare('DELETE FROM boards       WHERE course_id = ?')->execute([$id]);
     $db->prepare('DELETE FROM posts        WHERE course_id = ?')->execute([$id]);
@@ -263,8 +326,9 @@ function adminDoRestore(): string
 
 // ── Gather stats for dashboard ────────────────────────────────────────────────
 
-$courses = [];
-$stats   = [];
+$courses           = [];
+$standaloneCourses = [];
+$stats             = [];
 
 if ($authed) {
     $stats['courses']  = (int)(dbOne('SELECT COUNT(*) n FROM courses')['n'] ?? 0);
@@ -290,7 +354,8 @@ if ($authed) {
     }
 
     $courses = dbAll(
-        'SELECT c.id, c.issuer, c.context_id, c.title, c.label, c.created_at,
+        "SELECT c.id, c.issuer, c.context_id, c.title, c.label, c.created_at,
+                COALESCE(c.course_type, 'lti') AS course_type,
                 COUNT(DISTINCT e.user_id)  AS members,
                 COUNT(DISTINCT p.id)       AS posts,
                 COUNT(DISTINCT pfa.id)     AS pf_assignments,
@@ -302,8 +367,10 @@ if ($authed) {
       LEFT JOIN pf_submissions ps
              ON ps.assignment_id IN (SELECT id FROM pf_assignments WHERE course_id = c.id)
           GROUP BY c.id
-          ORDER BY c.created_at DESC'
+          ORDER BY c.created_at DESC"
     );
+
+    $standaloneCourses = array_filter($courses, fn($c) => ($c['course_type'] ?? 'lti') === 'standalone');
 }
 
 // ── HTML ──────────────────────────────────────────────────────────────────────
@@ -845,7 +912,9 @@ a:hover { text-decoration: underline; }
                         <span class="course-meta">ID: <?= (int)$c['id'] ?> &nbsp;·&nbsp; context: <?= htmlspecialchars($c['context_id']) ?></span>
                     </td>
                     <td>
-                        <?php if ($c['issuer']): ?>
+                        <?php if (($c['course_type'] ?? '') === 'standalone'): ?>
+                            <span class="badge" style="background:rgba(63,185,80,0.1);color:var(--success);border-color:rgba(63,185,80,0.3);">standalone</span>
+                        <?php elseif ($c['issuer']): ?>
                             <span class="badge" title="<?= htmlspecialchars($c['issuer']) ?>">
                                 <?= htmlspecialchars(parse_url($c['issuer'], PHP_URL_HOST) ?: $c['issuer']) ?>
                             </span>
@@ -870,6 +939,79 @@ a:hover { text-decoration: underline; }
             </tbody>
         </table>
         <?php endif; ?>
+    </div>
+
+    <!-- Standalone Courses -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-title">Standalone Courses</span>
+            <span style="color: var(--muted); font-size: 12px;"><?= count($standaloneCourses) ?> total</span>
+        </div>
+        <div class="section-body">
+            <p style="color:var(--muted);font-size:13px;margin-bottom:16px;">
+                Create courses that don't require an LMS. Students join via invite codes; instructors sign in via magic link.
+            </p>
+
+            <!-- Create course form -->
+            <form method="POST" action="<?= $adminUrl ?>" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;align-items:flex-end;">
+                <input type="hidden" name="action" value="create_standalone_course">
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Course Title</label>
+                    <input type="text" name="sa_title" required placeholder="e.g. Introduction to Photography"
+                           style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:7px 12px;font-size:13px;width:260px;">
+                </div>
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">Short Label</label>
+                    <input type="text" name="sa_label" placeholder="e.g. PHOT 101"
+                           style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:7px 12px;font-size:13px;width:140px;">
+                </div>
+                <button type="submit" class="btn btn-success">+ Create Course</button>
+            </form>
+
+            <?php if (empty($standaloneCourses)): ?>
+                <div class="empty-state">No standalone courses yet.</div>
+            <?php else: ?>
+            <!-- Set instructor / list courses -->
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Course</th>
+                        <th style="text-align:right;">Members</th>
+                        <th style="text-align:right;">Created</th>
+                        <th>Add / Set Instructor</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($standaloneCourses as $sc): ?>
+                    <tr>
+                        <td>
+                            <span class="course-title"><?= htmlspecialchars($sc['title']) ?></span>
+                            <?php if ($sc['label']): ?>
+                                <span class="course-meta"><?= htmlspecialchars($sc['label']) ?></span>
+                            <?php endif; ?>
+                            <span class="course-meta">ID: <?= (int)$sc['id'] ?></span>
+                        </td>
+                        <td style="text-align:right;font-family:monospace;"><?= (int)$sc['members'] ?></td>
+                        <td style="text-align:right;color:var(--muted);font-size:12px;white-space:nowrap;">
+                            <?= date('Y-m-d', (int)$sc['created_at']) ?>
+                        </td>
+                        <td>
+                            <form method="POST" action="<?= $adminUrl ?>" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                                <input type="hidden" name="action" value="set_standalone_instructor">
+                                <input type="hidden" name="sa_course_id" value="<?= (int)$sc['id'] ?>">
+                                <input type="email" name="sa_email" required placeholder="instructor@example.com"
+                                       style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:5px 10px;font-size:12px;width:200px;">
+                                <input type="text" name="sa_name" placeholder="Full Name (optional)"
+                                       style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:5px 10px;font-size:12px;width:160px;">
+                                <button type="submit" class="btn btn-default" style="font-size:12px;padding:5px 12px;">Generate Link</button>
+                            </form>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <?php endif; ?>
+        </div>
     </div>
 
 </div><!-- /admin-wrap -->
