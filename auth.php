@@ -441,11 +441,15 @@ function authHandleLogin(): never {
 // ── /auth/magic — Redeem magic link ──────────────────────────────────────────
 
 function authHandleMagic(): never {
-    $token = trim($_GET['token'] ?? '');
+    // Token arrives via GET (link click) or POST (confirmation button).
+    // We intentionally do NOT consume the token on GET so that email security
+    // scanners (Outlook SafeLinks, Proofpoint, etc.) that pre-fetch URLs cannot
+    // burn the one-time token before the user actually clicks.
+    $token = trim($_GET['token'] ?? $_POST['token'] ?? '');
 
     if (!$token) {
         authPage('Invalid Link', '<div class="auth-error">Missing token. Please request a new sign-in link.</div>
-            <p class="auth-link"><a href="' . APP_URL . '/login">Back to sign in</a></p>');
+            <p class="auth-link"><a href="' . APP_URL . '/auth.php?action=login">Back to sign in</a></p>');
     }
 
     $row = dbOne(
@@ -455,10 +459,28 @@ function authHandleMagic(): never {
 
     if (!$row) {
         authPage('Link Expired', '<div class="auth-error">This sign-in link has expired or already been used. Please request a new one.</div>
-            <p class="auth-link"><a href="' . APP_URL . '/login">Request a new link</a></p>');
+            <p class="auth-link"><a href="' . APP_URL . '/auth.php?action=login">Request a new link</a></p>');
     }
 
-    // Mark token as used
+    // GET: show a confirmation page. This prevents email scanners from consuming
+    // the token — they follow GET links but do not submit forms.
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        $safeToken = htmlspecialchars($token);
+        $action    = htmlspecialchars(APP_URL . '/auth.php?action=magic');
+        $appName   = htmlspecialchars(APP_NAME);
+        authPage('Sign In', <<<HTML
+        <h1 class="auth-title">Sign in to {$appName}</h1>
+        <p style="text-align:center;color:var(--text-muted);margin-bottom:1.5rem">
+            Click the button below to complete your sign-in.
+        </p>
+        <form method="POST" action="{$action}">
+            <input type="hidden" name="token" value="{$safeToken}">
+            <button type="submit" class="btn-auth-submit">Sign in →</button>
+        </form>
+        HTML);
+    }
+
+    // POST: consume token and create session
     dbRun('UPDATE local_auth_tokens SET used_at = ? WHERE token = ?', [time(), $token]);
 
     $userId   = (int)$row['user_id'];
@@ -469,7 +491,7 @@ function authHandleMagic(): never {
         $enrollment = dbOne('SELECT role FROM enrollments WHERE user_id = ? AND course_id = ?', [$userId, $courseId]);
         if (!$enrollment) {
             authPage('Access Error', '<div class="auth-error">You are not enrolled in that course. Please use a valid invite code to join.</div>
-                <p class="auth-link"><a href="' . APP_URL . '/join">Join with invite code</a></p>');
+                <p class="auth-link"><a href="' . APP_URL . '/auth.php?action=join">Join with invite code</a></p>');
         }
         authCreateSession($userId, $courseId, $enrollment['role']);
         header('Location: ' . APP_URL . '/');
@@ -477,7 +499,6 @@ function authHandleMagic(): never {
     }
 
     // Multiple courses — show picker via session-less cookie
-    // Store userId in a short-lived signed token
     $pickerToken = bin2hex(random_bytes(24));
     dbExec(
         'INSERT INTO local_auth_tokens (token, user_id, course_id, expires_at)

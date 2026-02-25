@@ -29,6 +29,7 @@ const state = {
     unreadCount:    0,
     notifOpen:      false,
     members:        [],
+    myCourses:      [],
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -129,6 +130,9 @@ async function init() {
         const courseData = await api.get('/api/course');
         state.spaces = courseData.spaces || [];
 
+        const myCourses = await api.get('/api/my-courses');
+        state.myCourses = myCourses || [];
+
         await loadNotifications();
 
         renderApp();
@@ -185,9 +189,24 @@ function renderTopbar() {
             <span class="logo-mark">◈</span>
             <span>Course Community</span>
         </div>
-        <div class="topbar-course">
+        <div class="topbar-course" id="course-switcher-wrap">
+            ${state.myCourses.length > 1 ? `
+            <button class="course-switcher-btn" id="course-switcher-btn" aria-haspopup="true" aria-expanded="false">
+                ${c.label ? `<span class="topbar-course-label">${esc(c.label)}</span>` : ''}
+                <span class="topbar-course-name">${esc(c.title)}</span>
+                <span class="course-switcher-caret">▾</span>
+            </button>
+            <div class="course-switcher-dropdown" id="course-switcher-dropdown" hidden>
+                <div class="course-switcher-header">My Courses</div>
+                ${state.myCourses.map(course => `
+                <button class="course-switcher-item ${course.id === c.id ? 'active' : ''}"
+                        onclick="switchCourse(${course.id})">
+                    <span class="course-switcher-title">${esc(course.title)}</span>
+                    ${course.label ? `<span class="course-switcher-label">${esc(course.label)}</span>` : ''}
+                </button>`).join('')}
+            </div>` : `
             ${c.label ? `<span class="topbar-course-label">${esc(c.label)}</span>` : ''}
-            <span class="topbar-course-name">${esc(c.title)}</span>
+            <span class="topbar-course-name">${esc(c.title)}</span>`}
         </div>
         <div class="topbar-actions">
             <button class="topbar-btn" id="notif-btn" aria-label="Notifications" aria-expanded="false" aria-haspopup="true">
@@ -212,6 +231,18 @@ function renderTopbar() {
 function bindTopbar() {
     document.getElementById('notif-btn').addEventListener('click', toggleNotifPanel);
 
+    // Course switcher
+    const csBtn = document.getElementById('course-switcher-btn');
+    const csDropdown = document.getElementById('course-switcher-dropdown');
+    if (csBtn && csDropdown) {
+        csBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const open = !csDropdown.hidden;
+            csDropdown.hidden = open;
+            csBtn.setAttribute('aria-expanded', String(!open));
+        });
+    }
+
     const wrap    = document.getElementById('account-menu-wrap');
     const btn     = document.getElementById('my-profile-btn');
     const dropdown = document.getElementById('account-dropdown');
@@ -227,6 +258,10 @@ function bindTopbar() {
         if (!dropdown.hidden) {
             dropdown.hidden = true;
             btn.setAttribute('aria-expanded', 'false');
+        }
+        if (csDropdown && !csDropdown.hidden) {
+            csDropdown.hidden = true;
+            csBtn?.setAttribute('aria-expanded', 'false');
         }
     });
 
@@ -1715,6 +1750,14 @@ async function submitCard(boardId) {
         toast('Card added!');
     } catch (e) { toast(e.message); }
 }
+
+window.switchCourse = async (courseId) => {
+    if (courseId === state.course?.id) return;
+    try {
+        await api.post('/api/session', { course_id: courseId });
+        window.location.reload();
+    } catch (e) { toast(e.message); }
+};
 
 window.toggleCardMenu = (cardId) => {
     // Close any other open menus first

@@ -103,7 +103,10 @@ function route(string $method, array $seg, array $body): void {
 
     match (true) {
         // Session
-        $s === 'session'                               => handleSession($method),
+        $s === 'session'                               => handleSession($method, $body),
+
+        // My courses (course switcher)
+        $s === 'my-courses' && $method === 'GET'       => handleMyCourses(),
 
         // Course
         $s === 'course'                                => handleCourse($method),
@@ -198,7 +201,7 @@ function route(string $method, array $seg, array $body): void {
 
 // ── Session ───────────────────────────────────────────────────────────────────
 
-function handleSession(string $method): void {
+function handleSession(string $method, array $body): void {
     if ($method === 'DELETE') {
         $sid = $_COOKIE['cc_session'] ?? '';
         if ($sid) {
@@ -213,8 +216,54 @@ function handleSession(string $method): void {
         json(['ok' => true]);
         return;
     }
+
+    if ($method === 'POST') {
+        // Course switcher — create a new session for a different enrolled course
+        $s        = requireAuth();
+        $courseId = (int)($body['course_id'] ?? 0);
+        if (!$courseId) jsonError(400, 'course_id required');
+
+        $enrollment = dbOne(
+            'SELECT e.role, c.course_type FROM enrollments e
+             JOIN courses c ON c.id = e.course_id
+             WHERE e.user_id = ? AND e.course_id = ?',
+            [$s['uid'], $courseId]
+        );
+        if (!$enrollment) jsonError(403, 'Not enrolled in that course');
+
+        $dur = ($enrollment['course_type'] === 'standalone') ? STANDALONE_SESSION_DURATION : SESSION_DURATION;
+        $newSid = bin2hex(random_bytes(32));
+        dbRun(
+            'INSERT INTO sessions (id, user_id, course_id, role, expires_at) VALUES (?, ?, ?, ?, ?)',
+            [$newSid, $s['uid'], $courseId, $enrollment['role'], time() + $dur]
+        );
+
+        $cookiePath = rtrim(parse_url(APP_URL, PHP_URL_PATH) ?: '/', '/') . '/';
+        setcookie('cc_session', $newSid, [
+            'expires'  => time() + $dur,
+            'path'     => $cookiePath ?: '/',
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+        json(['ok' => true]);
+        return;
+    }
+
     $s = requireAuth();
     json(['user' => userPayload($s), 'course' => coursePayload($s), 'role' => $s['role']]);
+}
+
+function handleMyCourses(): void {
+    $s = requireAuth();
+    $courses = dbAll(
+        'SELECT c.id, c.title, c.label, c.course_type, e.role
+         FROM enrollments e
+         JOIN courses c ON c.id = e.course_id
+         WHERE e.user_id = ?
+         ORDER BY c.title ASC',
+        [$s['uid']]
+    );
+    json($courses);
 }
 
 // ── Course ────────────────────────────────────────────────────────────────────
