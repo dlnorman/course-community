@@ -22,7 +22,7 @@ const state = {
     role:           'student',
     spaces:         [],
     currentSpaceId: null,
-    view:           'feed',   // feed | space | post | board | boards | docs | doc | members | profile | analytics | feedback | feedbackDetail | feedbackReview | moderation
+    view:           'feed',   // feed | space | post | board | boards | docs | doc | members | profile | analytics | feedback | feedbackDetail | feedbackReview | moderation | pulse | pulseDetail
     flaggedItems:   new Set(), // target_type:target_id pairs flagged by this user
     viewData:       {},       // extra data for current view
     notifications:  [],
@@ -30,6 +30,8 @@ const state = {
     notifOpen:      false,
     members:        [],
     myCourses:      [],
+    _pulseTimer:    null,     // polling timer for pulse detail view
+    pulseHasActive: false,    // true when at least one active check exists
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -79,6 +81,11 @@ const router = {
             window._docCleanup();
             window._docCleanup = null;
         }
+        // Clean up pulse polling timer
+        if (state._pulseTimer) {
+            clearInterval(state._pulseTimer);
+            state._pulseTimer = null;
+        }
         history.pushState({}, '', this.base + path);
         this.handle(path);
     },
@@ -110,6 +117,10 @@ const router = {
         if (seg1 === 'doc' && seg2) return views.doc(+seg2);
         if (seg1 === 'moderation') return views.moderation();
         if (seg1 === 'invites')    return views.invites();
+        if (seg1 === 'pulse') {
+            if (seg2) return views.pulseDetail(+seg2);
+            return views.pulse();
+        }
         return views.feed();
     },
 };
@@ -336,6 +347,12 @@ function renderSidebar() {
                 <span class="sidebar-icon" aria-hidden="true">🔁</span>
                 <span>Peer Feedback</span>
             </div>
+            <div class="sidebar-item ${'pulse|pulseDetail'.includes(state.view) ? 'active' : ''}" data-nav="/pulse"
+                 tabindex="0" role="button" ${'pulse|pulseDetail'.includes(state.view) ? 'aria-current="page"' : ''}>
+                <span class="sidebar-icon" aria-hidden="true">📡</span>
+                <span>Pulse Checks</span>
+                ${state.pulseHasActive ? '<span class="notif-badge" style="position:relative;top:auto;right:auto;margin-left:auto">●</span>' : ''}
+            </div>
             <div class="sidebar-item ${state.view === 'members' ? 'active' : ''}" data-nav="/members"
                  tabindex="0" role="button" ${state.view === 'members' ? 'aria-current="page"' : ''}>
                 <span class="sidebar-icon" aria-hidden="true">👥</span>
@@ -398,6 +415,7 @@ function refreshSidebar() {
         if (nav === '/analytics' && state.view === 'analytics') active = true;
         if (nav === '/moderation' && state.view === 'moderation') active = true;
         if (nav === '/feedback' && 'feedback|feedbackDetail|feedbackReview'.includes(state.view)) active = true;
+        if (nav === '/pulse' && 'pulse|pulseDetail'.includes(state.view)) active = true;
         if (item.dataset.spaceId && +item.dataset.spaceId === state.currentSpaceId) active = true;
         if (active) {
             item.classList.add('active');
@@ -3667,7 +3685,7 @@ async function submitNewInvite() {
         toast('Invite code created.');
         await loadInviteCodes();
     } catch (e) {
-        toast(e.message, 'error');
+        toast(e.message);
     }
 }
 
@@ -3678,13 +3696,669 @@ async function deactivateCode(id) {
         toast('Invite code deactivated.');
         await loadInviteCodes();
     } catch (e) {
-        toast(e.message, 'error');
+        toast(e.message);
     }
 }
 
 window.openNewInviteModal = openNewInviteModal;
 window.submitNewInvite    = submitNewInvite;
 window.deactivateCode     = deactivateCode;
+
+// ─────────────────────────────────────────────────────────────────
+// PULSE CHECKS
+// ─────────────────────────────────────────────────────────────────
+
+views.pulse = async function () {
+    state.view = 'pulse';
+    state.currentSpaceId = null;
+    refreshSidebar();
+    setView(`
+        <div class="mod-panel">
+            <div class="mod-panel-header">
+                <h1 class="page-title">📡 Pulse Checks</h1>
+                ${state.role === 'instructor' ? `<button class="btn btn-primary btn-sm" onclick="openNewPulseModal()">+ New Pulse Check</button>` : ''}
+            </div>
+            <div id="pulse-list">${loadingInline()}</div>
+        </div>`);
+    await loadPulseList();
+};
+
+async function loadPulseList() {
+    try {
+        const checks = await api.get('/api/pulse');
+        const el = document.getElementById('pulse-list');
+        if (!el) return;
+
+        // Update badge state
+        state.pulseHasActive = checks.some(c => c.status === 'active');
+
+        if (!checks.length) {
+            el.innerHTML = `<p style="color:var(--text-secondary);font-size:0.9rem;padding:1.5rem 0;">
+                ${state.role === 'instructor' ? 'No pulse checks yet. Create one to get started.' : 'No active pulse checks right now.'}
+            </p>`;
+            return;
+        }
+        el.innerHTML = checks.map(c => renderPulseCard(c)).join('');
+    } catch (e) {
+        const el = document.getElementById('pulse-list');
+        if (el) el.innerHTML = `<p class="error-msg">${esc(e.message)}</p>`;
+    }
+}
+
+function renderPulseCard(c) {
+    const statusLabel = { draft: 'Draft', active: 'Active', closed: 'Closed' }[c.status] || c.status;
+    return `
+    <div class="pulse-check-card" onclick="router.navigate('/pulse/${c.id}')">
+        <div class="pulse-check-card-body">
+            <div class="pulse-check-title">${esc(c.title || 'Untitled Pulse Check')}</div>
+            <div class="pulse-check-meta">
+                <span class="pulse-status-badge ${c.status}">${statusLabel}</span>
+                <span>${c.question_count || 0} question${c.question_count !== 1 ? 's' : ''}</span>
+                ${c.access === 'public' ? '<span>🌐 Public</span>' : '<span>🔒 Course only</span>'}
+            </div>
+        </div>
+    </div>`;
+}
+
+views.pulseDetail = async function (id) {
+    state.view = 'pulseDetail';
+    state.currentSpaceId = null;
+    refreshSidebar();
+    setView(loadingInline());
+    await loadPulseDetail(id);
+
+    // Poll every 5s
+    if (state._pulseTimer) clearInterval(state._pulseTimer);
+    state._pulseTimer = setInterval(() => loadPulseDetail(id, true), 5000);
+};
+
+async function loadPulseDetail(id, silent = false) {
+    try {
+        const data = await api.get(`/api/pulse/${id}`);
+        if (!data) return;
+        const { check, questions, my_responses } = data;
+
+        if (!silent) {
+            setView(renderPulseDetailPage(check, questions, my_responses));
+            // Generate QR if public + instructor
+            if (check.access === 'public' && check.share_token && state.role === 'instructor') {
+                const qrEl = document.getElementById('pulse-qr-target');
+                if (qrEl && !qrEl.dataset.rendered) {
+                    qrEl.dataset.rendered = '1';
+                    const url = (window.APP_CONFIG?.baseUrl ?? '') + '/p/' + check.share_token;
+                    loadQRCode(qrEl, url);
+                }
+            }
+        } else {
+            // Soft update: refresh individual question states
+            questions.forEach(q => refreshQuestionCard(q, my_responses));
+        }
+    } catch (e) {
+        if (!silent) setView(`<p class="error-msg">${esc(e.message)}</p>`);
+    }
+}
+
+function renderPulseDetailPage(check, questions, myResponses) {
+    const isInstructor = state.role === 'instructor';
+    const shareUrl = check.share_token
+        ? (window.APP_CONFIG?.baseUrl ?? '') + '/p/' + check.share_token
+        : null;
+
+    const statusLabel = { draft: 'Draft', active: 'Active', closed: 'Closed' }[check.status] || check.status;
+
+    let headerActions = '';
+    if (isInstructor) {
+        if (check.status === 'draft') {
+            headerActions = `<button class="btn btn-primary btn-sm" onclick="activatePulse(${check.id})">▶ Activate</button>`;
+        } else if (check.status === 'active') {
+            headerActions = `<button class="btn btn-ghost btn-sm" onclick="closePulse(${check.id})">■ Close Session</button>`;
+        }
+    }
+
+    let shareSection = '';
+    if (isInstructor && check.access === 'public' && shareUrl) {
+        shareSection = `
+        <div class="pulse-share-box">
+            <input class="pulse-share-url" readonly value="${esc(shareUrl)}" id="pulse-share-input">
+            <button class="btn btn-ghost btn-sm" onclick="copyPulseUrl()">Copy</button>
+        </div>
+        <div class="pulse-qr-wrap"><div id="pulse-qr-target"></div></div>`;
+    }
+
+    let questionsHtml = '';
+    if (isInstructor) {
+        questionsHtml = questions.map(q => renderQuestionManageCard(q)).join('') +
+            `<button class="btn btn-ghost btn-sm" style="margin-top:0.5rem" onclick="openAddQuestionModal(${check.id})">+ Add Question</button>`;
+    } else {
+        const openQs = questions.filter(q => q.is_open);
+        if (!openQs.length && check.status === 'active') {
+            questionsHtml = `<p style="color:var(--text-muted);font-style:italic;padding:1rem 0;">Waiting for instructor to open a question…</p>`;
+        } else if (check.status !== 'active') {
+            questionsHtml = `<p style="color:var(--text-muted);padding:1rem 0;">This pulse check is ${check.status}.</p>`;
+        } else {
+            questionsHtml = questions.map(q => renderQuestionResponseCard(q, myResponses[q.id])).join('');
+        }
+    }
+
+    return `
+    <div class="mod-panel">
+        <div class="mod-panel-header" style="flex-wrap:wrap;gap:0.5rem">
+            <div style="display:flex;align-items:center;gap:0.75rem;flex:1;min-width:0">
+                <button class="btn btn-ghost btn-sm" onclick="router.navigate('/pulse')" style="flex-shrink:0">← Back</button>
+                <h1 class="page-title" style="margin:0">${esc(check.title || 'Untitled')}</h1>
+                <span class="pulse-status-badge ${check.status}">${statusLabel}</span>
+                ${check.access === 'public' ? '<span style="font-size:0.8rem;color:var(--text-muted)">🌐 Public</span>' : ''}
+            </div>
+            <div style="display:flex;gap:0.5rem;align-items:center">${headerActions}</div>
+        </div>
+        ${shareSection}
+        <div id="pulse-questions-area">${questionsHtml}</div>
+    </div>`;
+}
+
+function renderQuestionManageCard(q) {
+    const typeLabel = { choice: 'Choice', text: 'Text', rating: 'Rating', wordcloud: 'Word Cloud' }[q.type] || q.type;
+    return `
+    <div class="pulse-question-card ${q.is_open ? 'is-open' : ''}" id="pqcard-${q.id}" data-qid="${q.id}">
+        <div class="pulse-q-header">
+            <div class="pulse-open-indicator ${q.is_open ? 'active' : ''}" title="${q.is_open ? 'Open' : 'Closed'}"></div>
+            <div class="pulse-q-text">${esc(q.question)}</div>
+            <span class="pulse-type-badge">${esc(typeLabel)}</span>
+        </div>
+        <div class="pulse-q-actions">
+            <button class="btn btn-sm ${q.is_open ? 'btn-primary' : 'btn-ghost'}" onclick="toggleQuestionOpen(${q.id})">
+                ${q.is_open ? '■ Close' : '▶ Open'}
+            </button>
+            <button class="btn btn-sm ${q.results_visible ? 'btn-primary' : 'btn-ghost'}" onclick="toggleQuestionReveal(${q.id})">
+                ${q.results_visible ? '👁 Hide Results' : '📊 Reveal Results'}
+            </button>
+            <button class="btn btn-ghost btn-sm" onclick="deletePulseQuestion(${q.id})">Delete</button>
+        </div>
+        ${q.results_visible || q.is_open ? `<div id="pqresults-${q.id}" style="margin-top:0.75rem">${loadingInline()}</div>` : ''}
+    </div>`;
+}
+
+function renderQuestionResponseCard(q, myResponse) {
+    const typeLabel = { choice: 'Multiple Choice', text: 'Short Text', rating: 'Rating', wordcloud: 'Word Cloud' }[q.type] || q.type;
+    let formHtml = '';
+
+    if (q.results_visible) {
+        formHtml = `<div id="qresult-${q.id}">${loadingInline()}</div>`;
+    } else if (q.is_open && !myResponse) {
+        formHtml = renderResponseForm(q);
+    } else if (q.is_open && myResponse) {
+        formHtml = `<div class="pulse-submitted-msg">✓ Response recorded</div>
+                    <div class="pulse-awaiting-msg">Awaiting results from instructor…</div>`;
+    } else {
+        formHtml = `<p class="pulse-awaiting-msg">Waiting for question to open…</p>`;
+    }
+
+    return `
+    <div class="pulse-question-card" id="pqcard-${q.id}" data-qid="${q.id}">
+        <div class="pulse-q-header">
+            <div class="pulse-q-text">${esc(q.question)}</div>
+            <span class="pulse-type-badge">${esc(typeLabel)}</span>
+        </div>
+        <div id="pqbody-${q.id}">${formHtml}</div>
+    </div>`;
+}
+
+function renderResponseForm(q) {
+    const opts = q.options;
+    if (q.type === 'choice' && Array.isArray(opts)) {
+        const btns = opts.map((o, i) => `
+            <button class="pulse-choice-btn" onclick="selectPulseChoice(this, ${q.id}, ${i})" data-idx="${i}">
+                <span class="pulse-choice-letter">${String.fromCharCode(65 + i)}</span>
+                ${esc(o)}
+            </button>`).join('');
+        return `<div class="pulse-choice-options">${btns}</div>
+                <button class="btn btn-primary btn-sm" id="psubmit-${q.id}" onclick="submitPulseResponse(${q.id}, 'choice')" disabled>Submit</button>`;
+    }
+    if (q.type === 'rating' && opts) {
+        const min = opts.min ?? 1, max = opts.max ?? 5;
+        const btns = [];
+        for (let v = min; v <= max; v++) {
+            btns.push(`<button class="pulse-rating-btn" onclick="selectPulseRating(this, ${q.id}, ${v})" data-val="${v}">${v}</button>`);
+        }
+        return `<div class="pulse-rating-wrap">
+            ${opts.min_label || opts.max_label ? `<div class="pulse-rating-labels"><span>${esc(opts.min_label||'')}</span><span>${esc(opts.max_label||'')}</span></div>` : ''}
+            <div class="pulse-rating-scale">${btns.join('')}</div>
+        </div>
+        <button class="btn btn-primary btn-sm" id="psubmit-${q.id}" style="margin-top:0.75rem" onclick="submitPulseResponse(${q.id}, 'rating')" disabled>Submit</button>`;
+    }
+    if (q.type === 'text') {
+        return `<textarea class="form-input" id="ptext-${q.id}" placeholder="Type your response…" maxlength="500" rows="3"
+                    oninput="document.getElementById('psubmit-${q.id}').disabled = !this.value.trim()"></textarea>
+                <button class="btn btn-primary btn-sm" id="psubmit-${q.id}" style="margin-top:0.5rem" onclick="submitPulseResponse(${q.id}, 'text')" disabled>Submit</button>`;
+    }
+    if (q.type === 'wordcloud') {
+        return `<input type="text" class="form-input" id="ptext-${q.id}" placeholder="One word or short phrase…" maxlength="50"
+                    oninput="document.getElementById('psubmit-${q.id}').disabled = !this.value.trim()">
+                <button class="btn btn-primary btn-sm" id="psubmit-${q.id}" style="margin-top:0.5rem" onclick="submitPulseResponse(${q.id}, 'wordcloud')" disabled>Submit</button>`;
+    }
+    return '';
+}
+
+function renderPulseResults(q, results, count) {
+    if (!results) return '';
+    let body = '';
+    const countStr = `<div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:0.5rem">${count} response${count !== 1 ? 's' : ''}</div>`;
+
+    if (q.type === 'choice' || (q.type === 'rating' && results.bars)) {
+        const bars = q.type === 'rating' ? results.bars : results;
+        body = (bars || []).map(item => `
+            <div class="pulse-bar-row">
+                <span class="pulse-bar-label">${esc(String(item.label ?? item.value))}</span>
+                <div class="pulse-bar-track"><div class="pulse-bar-fill" style="width:${item.percent}%"></div></div>
+                <span class="pulse-bar-count">${item.count}</span>
+            </div>`).join('');
+        if (q.type === 'rating' && results.mean !== null) {
+            const labels = [results.min_label, results.max_label].filter(Boolean);
+            body += `<div class="pulse-mean">Mean: <strong>${results.mean}</strong>${labels.length ? ' (' + esc(labels.join(' → ')) + ')' : ''}</div>`;
+        }
+    } else if (q.type === 'wordcloud') {
+        if (!results.length) { body = '<p style="color:var(--text-muted);font-size:0.85rem">No responses yet.</p>'; }
+        else {
+            const max = results[0].count || 1;
+            body = '<div class="word-cloud-wrap">' +
+                results.map(w => {
+                    const size = 0.9 + (w.count / max) * 2.1;
+                    return `<span class="word-cloud-word" style="font-size:${size.toFixed(2)}rem">${esc(w.word)}</span>`;
+                }).join('') + '</div>';
+        }
+    } else if (q.type === 'text') {
+        if (!results.length) { body = '<p style="color:var(--text-muted);font-size:0.85rem">No responses yet.</p>'; }
+        else {
+            body = '<div class="pulse-text-list">' + results.map(r => `<div class="pulse-text-item">${esc(r)}</div>`).join('') + '</div>';
+        }
+    }
+    return countStr + body;
+}
+
+async function refreshQuestionCard(q, myResponses) {
+    const card = document.getElementById('pqcard-' + q.id);
+    if (!card) return;
+
+    // Instructor: update open/reveal state and reload results
+    if (state.role === 'instructor') {
+        card.className = 'pulse-question-card' + (q.is_open ? ' is-open' : '');
+        const indicator = card.querySelector('.pulse-open-indicator');
+        if (indicator) {
+            indicator.className = 'pulse-open-indicator' + (q.is_open ? ' active' : '');
+        }
+        const actionsDiv = card.querySelector('.pulse-q-actions');
+        if (actionsDiv) {
+            actionsDiv.innerHTML = `
+                <button class="btn btn-sm ${q.is_open ? 'btn-primary' : 'btn-ghost'}" onclick="toggleQuestionOpen(${q.id})">
+                    ${q.is_open ? '■ Close' : '▶ Open'}
+                </button>
+                <button class="btn btn-sm ${q.results_visible ? 'btn-primary' : 'btn-ghost'}" onclick="toggleQuestionReveal(${q.id})">
+                    ${q.results_visible ? '👁 Hide Results' : '📊 Reveal Results'}
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="deletePulseQuestion(${q.id})">Delete</button>`;
+        }
+        if (q.results_visible || q.is_open) {
+            const resDiv = document.getElementById('pqresults-' + q.id);
+            if (resDiv) loadAndShowResults(q.id, resDiv);
+        }
+        return;
+    }
+
+    // Student: update body
+    const bodyDiv = document.getElementById('pqbody-' + q.id);
+    if (!bodyDiv) return;
+    const myResp = myResponses ? myResponses[q.id] : undefined;
+
+    if (q.results_visible) {
+        const resDiv = document.getElementById('qresult-' + q.id);
+        if (!resDiv) {
+            // results just revealed: replace body
+            bodyDiv.innerHTML = `<div id="qresult-${q.id}">${loadingInline()}</div>`;
+        }
+        loadAndShowStudentResults(q.id);
+    } else if (q.is_open && !myResp) {
+        if (!bodyDiv.querySelector('.pulse-choice-options, .pulse-rating-scale, textarea, input[type=text]')) {
+            bodyDiv.innerHTML = renderResponseForm(q);
+        }
+    }
+}
+
+async function loadAndShowResults(qId, el) {
+    try {
+        const data = await api.get(`/api/pulse-questions/${qId}/results`);
+        if (el && el.isConnected) el.innerHTML = renderPulseResults(data.question, data.results, data.count);
+    } catch (_) {}
+}
+
+async function loadAndShowStudentResults(qId) {
+    const el = document.getElementById('qresult-' + qId);
+    if (!el) return;
+    try {
+        const data = await api.get(`/api/pulse-questions/${qId}/results`);
+        el.innerHTML = renderPulseResults(data.question, data.results, data.count);
+    } catch (_) {}
+}
+
+// ── Pulse interaction ─────────────────────────────────────────────
+
+const _pulseChoices = {};
+const _pulseRatings = {};
+
+window.selectPulseChoice = function(btn, qId, idx) {
+    const card = document.getElementById('pqcard-' + qId);
+    card?.querySelectorAll('.pulse-choice-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    _pulseChoices[qId] = idx;
+    const sub = document.getElementById('psubmit-' + qId);
+    if (sub) sub.disabled = false;
+};
+
+window.selectPulseRating = function(btn, qId, val) {
+    const card = document.getElementById('pqcard-' + qId);
+    card?.querySelectorAll('.pulse-rating-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    _pulseRatings[qId] = val;
+    const sub = document.getElementById('psubmit-' + qId);
+    if (sub) sub.disabled = false;
+};
+
+window.submitPulseResponse = async function(qId, type) {
+    let response;
+    if (type === 'choice')      response = String(_pulseChoices[qId] ?? '');
+    else if (type === 'rating') response = String(_pulseRatings[qId] ?? '');
+    else {
+        const el = document.getElementById('ptext-' + qId);
+        response = el ? el.value.trim() : '';
+    }
+    if (response === '' && response !== '0') { toast('Please enter a response.'); return; }
+
+    const btn = document.getElementById('psubmit-' + qId);
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+
+    try {
+        await api.post(`/api/pulse-questions/${qId}/respond`, { response });
+        const bodyDiv = document.getElementById('pqbody-' + qId);
+        if (bodyDiv) {
+            bodyDiv.innerHTML = `<div class="pulse-submitted-msg">✓ Response recorded</div>
+                <div class="pulse-awaiting-msg">Awaiting results from instructor…</div>`;
+        }
+    } catch (e) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Submit'; }
+        toast(e.message);
+    }
+};
+
+window.toggleQuestionOpen = async function(qId) {
+    try {
+        const data = await api.post(`/api/pulse-questions/${qId}/open`, {});
+        const card = document.getElementById('pqcard-' + qId);
+        if (card) {
+            card.className = 'pulse-question-card' + (data.is_open ? ' is-open' : '');
+            const indicator = card.querySelector('.pulse-open-indicator');
+            if (indicator) indicator.className = 'pulse-open-indicator' + (data.is_open ? ' active' : '');
+            const actionsDiv = card.querySelector('.pulse-q-actions');
+            if (actionsDiv) {
+                actionsDiv.querySelector('button:first-child').textContent = data.is_open ? '■ Close' : '▶ Open';
+                actionsDiv.querySelector('button:first-child').className = `btn btn-sm ${data.is_open ? 'btn-primary' : 'btn-ghost'}`;
+            }
+            const resDiv = document.getElementById('pqresults-' + qId);
+            if (data.is_open && !resDiv) {
+                card.querySelector('.pulse-q-actions').insertAdjacentHTML('afterend',
+                    `<div id="pqresults-${qId}" style="margin-top:0.75rem">${loadingInline()}</div>`);
+                loadAndShowResults(qId, document.getElementById('pqresults-' + qId));
+            }
+        }
+    } catch (e) { toast(e.message); }
+};
+
+window.toggleQuestionReveal = async function(qId) {
+    try {
+        const data = await api.post(`/api/pulse-questions/${qId}/reveal`, {});
+        const card = document.getElementById('pqcard-' + qId);
+        if (card) {
+            const revBtn = card.querySelector('.pulse-q-actions button:nth-child(2)');
+            if (revBtn) {
+                revBtn.textContent = data.results_visible ? '👁 Hide Results' : '📊 Reveal Results';
+                revBtn.className = `btn btn-sm ${data.results_visible ? 'btn-primary' : 'btn-ghost'}`;
+            }
+        }
+    } catch (e) { toast(e.message); }
+};
+
+window.deletePulseQuestion = async function(qId) {
+    if (!confirm('Delete this question and all responses?')) return;
+    try {
+        await api.del(`/api/pulse-questions/${qId}`);
+        document.getElementById('pqcard-' + qId)?.remove();
+        toast('Question deleted.');
+    } catch (e) { toast(e.message); }
+};
+
+window.activatePulse = async function(id) {
+    try {
+        await api.put(`/api/pulse/${id}`, { status: 'active' });
+        toast('Pulse check activated!');
+        state.pulseHasActive = true;
+        await loadPulseDetail(id);
+    } catch (e) { toast(e.message); }
+};
+
+window.closePulse = async function(id) {
+    if (!confirm('Close this session? Students can no longer respond.')) return;
+    try {
+        await api.put(`/api/pulse/${id}`, { status: 'closed' });
+        toast('Session closed.');
+        if (state._pulseTimer) { clearInterval(state._pulseTimer); state._pulseTimer = null; }
+        await loadPulseDetail(id);
+    } catch (e) { toast(e.message); }
+};
+
+window.copyPulseUrl = function() {
+    const input = document.getElementById('pulse-share-input');
+    if (input) {
+        navigator.clipboard?.writeText(input.value).then(() => toast('URL copied to clipboard.'));
+    }
+};
+
+// ── QR code loader ────────────────────────────────────────────────
+
+async function loadQRCode(el, url) {
+    if (!window.QRCode) {
+        await new Promise((res, rej) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+            s.onload = res; s.onerror = rej;
+            document.head.appendChild(s);
+        });
+    }
+    if (el && el.isConnected) {
+        new QRCode(el, { text: url, width: 160, height: 160,
+            colorDark: '#1C1E2A', colorLight: '#ffffff' });
+    }
+}
+
+// ── New Pulse modal ───────────────────────────────────────────────
+
+window.openNewPulseModal = function() {
+    openModal(`
+        <h2 class="modal-title" style="margin-bottom:1rem">📡 New Pulse Check</h2>
+        <div class="form-group">
+            <label class="form-label">Title</label>
+            <input id="pulse-title" type="text" class="form-input" placeholder="e.g. Week 3 Check-in">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Access</label>
+            <div class="type-selector" id="pulse-access-sel" style="grid-template-columns:1fr 1fr">
+                <div class="type-option selected" data-val="course" onclick="selectPulseAccess(this)">
+                    <div class="type-icon">🔒</div>
+                    <div class="type-label">Course only</div>
+                    <div class="type-desc">Only enrolled students can respond</div>
+                </div>
+                <div class="type-option" data-val="public" onclick="selectPulseAccess(this)">
+                    <div class="type-icon">🌐</div>
+                    <div class="type-label">Public</div>
+                    <div class="type-desc">Anyone with the link or QR code can respond</div>
+                </div>
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1.5rem">
+            <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitNewPulse()">Create</button>
+        </div>
+    `);
+};
+
+window.selectPulseAccess = function(el) {
+    document.querySelectorAll('#pulse-access-sel .type-option').forEach(o => o.classList.remove('selected'));
+    el.classList.add('selected');
+};
+
+window.submitNewPulse = async function() {
+    const title = document.getElementById('pulse-title')?.value.trim();
+    if (!title) { toast('Please enter a title.'); return; }
+    const accessEl = document.querySelector('#pulse-access-sel .type-option.selected');
+    const access = accessEl?.dataset.val || 'course';
+    try {
+        const check = await api.post('/api/pulse', { title, access });
+        closeModal();
+        toast('Pulse check created.');
+        router.navigate('/pulse/' + check.id);
+    } catch (e) { toast(e.message); }
+};
+
+// ── Add Question modal ────────────────────────────────────────────
+
+window.openAddQuestionModal = function(checkId) {
+    openModal(`
+        <h2 class="modal-title" style="margin-bottom:1rem">Add Question</h2>
+        <div class="form-group">
+            <label class="form-label">Question</label>
+            <input id="pq-question" type="text" class="form-input" placeholder="Your question…">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Type</label>
+            <div class="type-selector" id="pq-type-sel" style="grid-template-columns:repeat(2,1fr)">
+                <div class="type-option selected" data-val="choice" onclick="selectPQType(this)">
+                    <div class="type-icon">☑</div>
+                    <div class="type-label">Multiple Choice</div>
+                </div>
+                <div class="type-option" data-val="text" onclick="selectPQType(this)">
+                    <div class="type-icon">✏️</div>
+                    <div class="type-label">Short Text</div>
+                </div>
+                <div class="type-option" data-val="rating" onclick="selectPQType(this)">
+                    <div class="type-icon">⭐</div>
+                    <div class="type-label">Rating / Likert</div>
+                </div>
+                <div class="type-option" data-val="wordcloud" onclick="selectPQType(this)">
+                    <div class="type-icon">☁️</div>
+                    <div class="type-label">Word Cloud</div>
+                </div>
+            </div>
+        </div>
+        <div id="pq-type-extras"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1.5rem">
+            <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitAddQuestion(${checkId})">Add Question</button>
+        </div>
+    `);
+    updatePQExtras('choice');
+};
+
+window.selectPQType = function(el) {
+    document.querySelectorAll('#pq-type-sel .type-option').forEach(o => o.classList.remove('selected'));
+    el.classList.add('selected');
+    updatePQExtras(el.dataset.val);
+};
+
+function updatePQExtras(type) {
+    const el = document.getElementById('pq-type-extras');
+    if (!el) return;
+    if (type === 'choice') {
+        el.innerHTML = `
+        <div class="form-group">
+            <label class="form-label">Options</label>
+            <div id="pq-options-list">
+                <div class="poll-option-row"><input type="text" class="poll-option-input" placeholder="Option A">
+                    <button class="poll-remove-btn" onclick="removePQOption(this)">✕</button></div>
+                <div class="poll-option-row"><input type="text" class="poll-option-input" placeholder="Option B">
+                    <button class="poll-remove-btn" onclick="removePQOption(this)">✕</button></div>
+            </div>
+            <button class="add-option-btn btn-ghost" onclick="addPQOption()" style="margin-top:0.5rem">+ Add option</button>
+        </div>`;
+    } else if (type === 'rating') {
+        el.innerHTML = `
+        <div class="form-group">
+            <label class="form-label">Scale</label>
+            <div style="display:flex;gap:0.75rem;align-items:center">
+                <select id="pq-rmin" class="form-input" style="width:auto">
+                    <option value="1">1</option>
+                </select>
+                <span>to</span>
+                <select id="pq-rmax" class="form-input" style="width:auto">
+                    <option value="5">5</option>
+                    <option value="7">7</option>
+                    <option value="10">10</option>
+                </select>
+            </div>
+        </div>
+        <div style="display:flex;gap:0.75rem">
+            <div class="form-group" style="flex:1">
+                <label class="form-label">Min label <span style="font-weight:400;color:var(--text-secondary)">(optional)</span></label>
+                <input id="pq-minlabel" type="text" class="form-input" placeholder="e.g. Strongly disagree">
+            </div>
+            <div class="form-group" style="flex:1">
+                <label class="form-label">Max label <span style="font-weight:400;color:var(--text-secondary)">(optional)</span></label>
+                <input id="pq-maxlabel" type="text" class="form-input" placeholder="e.g. Strongly agree">
+            </div>
+        </div>`;
+    } else {
+        el.innerHTML = '';
+    }
+}
+
+window.addPQOption = function() {
+    const list = document.getElementById('pq-options-list');
+    if (!list) return;
+    const n = list.children.length;
+    const row = document.createElement('div');
+    row.className = 'poll-option-row';
+    row.innerHTML = `<input type="text" class="poll-option-input" placeholder="Option ${String.fromCharCode(65 + n)}">
+        <button class="poll-remove-btn" onclick="removePQOption(this)">✕</button>`;
+    list.appendChild(row);
+};
+
+window.removePQOption = function(btn) {
+    const list = document.getElementById('pq-options-list');
+    if (list && list.children.length > 2) btn.parentElement.remove();
+};
+
+window.submitAddQuestion = async function(checkId) {
+    const question = document.getElementById('pq-question')?.value.trim();
+    if (!question) { toast('Please enter a question.'); return; }
+    const typeEl = document.querySelector('#pq-type-sel .type-option.selected');
+    const type = typeEl?.dataset.val || 'choice';
+
+    const body = { question, type };
+
+    if (type === 'choice') {
+        const inputs = document.querySelectorAll('#pq-options-list .poll-option-input');
+        body.options = Array.from(inputs).map(i => i.value.trim()).filter(Boolean);
+        if (body.options.length < 2) { toast('Please add at least 2 options.'); return; }
+    } else if (type === 'rating') {
+        body.min = 1;
+        body.max = parseInt(document.getElementById('pq-rmax')?.value || '5');
+        body.min_label = document.getElementById('pq-minlabel')?.value.trim() || '';
+        body.max_label = document.getElementById('pq-maxlabel')?.value.trim() || '';
+    }
+
+    try {
+        await api.post(`/api/pulse/${checkId}/questions`, body);
+        closeModal();
+        toast('Question added.');
+        await loadPulseDetail(checkId);
+    } catch (e) { toast(e.message); }
+};
 
 // ── Start ─────────────────────────────────────────────────────────
 init();

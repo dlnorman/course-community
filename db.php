@@ -374,6 +374,48 @@ function initSchema(PDO $db): void {
         CREATE INDEX IF NOT EXISTS idx_pf_ra_asgn      ON pf_review_assignments(assignment_id);
     ");
 
+    // Pulse Checks Tables
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS pulse_checks (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            course_id    INTEGER NOT NULL,
+            created_by   INTEGER NOT NULL,
+            title        TEXT NOT NULL DEFAULT '',
+            access       TEXT NOT NULL DEFAULT 'course',
+            status       TEXT NOT NULL DEFAULT 'draft',
+            share_token  TEXT UNIQUE,
+            created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            FOREIGN KEY (course_id)  REFERENCES courses(id),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS pulse_questions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            check_id        INTEGER NOT NULL,
+            question        TEXT NOT NULL,
+            type            TEXT NOT NULL,
+            options_json    TEXT,
+            sort_order      INTEGER NOT NULL DEFAULT 0,
+            is_open         INTEGER NOT NULL DEFAULT 0,
+            results_visible INTEGER NOT NULL DEFAULT 0,
+            created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            FOREIGN KEY (check_id) REFERENCES pulse_checks(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS pulse_responses (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            question_id INTEGER NOT NULL,
+            user_id     INTEGER,
+            response    TEXT NOT NULL,
+            created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            FOREIGN KEY (question_id) REFERENCES pulse_questions(id),
+            FOREIGN KEY (user_id)     REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pulse_responses ON pulse_responses(question_id);
+        CREATE INDEX IF NOT EXISTS idx_pulse_checks_course ON pulse_checks(course_id, status);
+    ");
+
     migrateSchema($db);
 }
 

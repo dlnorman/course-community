@@ -30,7 +30,7 @@ $_ltiTarget = $_appBase . '/';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Course Community — A living learning space for your course</title>
-    <meta name="description" content="An open-source course community platform that integrates with Brightspace via LTI 1.3. Discussion, Q&A, collaboration boards, collaborative documents, peer recognition, and more.">
+    <meta name="description" content="An open-source course community platform that integrates with Brightspace via LTI 1.3. Discussion, Q&A, collaboration boards, documents, peer feedback, live Pulse Checks, and more.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..500&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -214,6 +214,7 @@ $_ltiTarget = $_appBase . '/';
         <div class="nav-links">
             <a href="#features">Features</a>
             <a href="#peer-feedback">Peer Feedback</a>
+            <a href="#pulse-checks">Pulse Checks</a>
             <a href="#moderation">Moderation</a>
             <a href="#design">Principles</a>
             <a href="#integration">LTI Setup</a>
@@ -277,7 +278,7 @@ $_ltiTarget = $_appBase . '/';
                     <div class="hv-si">📄 Documents</div>
                     <div class="hv-si">🔁 Peer Review</div>
                     <div class="hv-si">👥 Members</div>
-                    <div class="hv-si" style="margin-top:0.5rem">📊 Pulse</div>
+                    <div class="hv-si" style="margin-top:0.5rem">📡 Pulse Checks</div>
                     <div class="hv-si">🛡️ Moderation</div>
                 </div>
                 <div class="hv-main">
@@ -371,6 +372,12 @@ $_ltiTarget = $_appBase . '/';
                 <div class="feature-title">Community Pulse Dashboard</div>
                 <p class="feature-desc">Instructors see who's contributing, which spaces are thriving, unanswered questions, and — crucially — which students are quietly disengaged before it becomes a problem.</p>
                 <span class="feature-tag" style="background:var(--accent-t);color:var(--accent)">Analytics</span>
+            </div>
+            <div class="feature-card" style="border-color:rgba(200,75,16,0.25);background:linear-gradient(135deg,#fff 80%,var(--accent-t))">
+                <div class="feature-icon">📡</div>
+                <div class="feature-title">Pulse Checks — Live Audience Response</div>
+                <p class="feature-desc">Run real-time response sessions during class or a conference. Instructors create sets of questions (multiple choice, rating scales, word clouds, or short text), open them one at a time, and reveal results on their own schedule. Public sessions generate a QR code so audiences can join from any device with no login required.</p>
+                <span class="feature-tag" style="background:var(--accent-t);color:var(--accent)">Live Response</span>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🔔</div>
@@ -494,6 +501,124 @@ $_ltiTarget = $_appBase . '/';
                 </div>
                 <?php endforeach ?>
             </div>
+        </div>
+    </div>
+</section>
+
+<!-- ── Pulse Checks ──────────────────────────────────────────────────── -->
+<section class="section" id="pulse-checks">
+    <div class="container">
+        <div class="section-header">
+            <div class="section-label">Pulse Checks</div>
+            <h2 class="section-title">Live response — in the room and beyond</h2>
+            <p class="section-subtitle">Pose questions during a class, workshop, or conference. Students and audience members respond in real time. Instructors reveal results when they're ready.</p>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4rem;align-items:start;max-width:960px;margin:0 auto">
+            <div>
+                <h3 style="font-family:'Fraunces',Georgia,serif;font-size:1.2rem;margin-bottom:1.5rem">How it works</h3>
+                <div class="setup-steps">
+                    <div class="setup-step">
+                        <div class="setup-step-num" style="background:var(--sidebar)">1</div>
+                        <div class="setup-step-content">
+                            <div class="setup-step-title">Instructor builds a check</div>
+                            <div class="setup-step-desc">Create a set of questions in any combination of types: multiple choice, rating/Likert scale, word cloud, or short text. Choose course-only access (enrolled students) or public access (anyone with the link or QR code).</div>
+                        </div>
+                    </div>
+                    <div class="setup-step">
+                        <div class="setup-step-num" style="background:var(--sidebar)">2</div>
+                        <div class="setup-step-content">
+                            <div class="setup-step-title">Activate and share</div>
+                            <div class="setup-step-desc">Click Activate. For public sessions, a QR code and short URL appear in the presenter view — show them on a slide so the audience can join from any device, no account needed.</div>
+                        </div>
+                    </div>
+                    <div class="setup-step">
+                        <div class="setup-step-num" style="background:var(--sidebar)">3</div>
+                        <div class="setup-step-content">
+                            <div class="setup-step-title">Open questions one at a time</div>
+                            <div class="setup-step-desc">Open each question when you're ready. Students and audience members see the response form immediately and can submit without leaving the page.</div>
+                        </div>
+                    </div>
+                    <div class="setup-step">
+                        <div class="setup-step-num" style="background:var(--sidebar)">4</div>
+                        <div class="setup-step-content">
+                            <div class="setup-step-title">Reveal results on your schedule</div>
+                            <div class="setup-step-desc">Results are hidden from respondents until you decide to reveal them. Use the reveal as a teaching moment — show the distribution, discuss what it means, then move on.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <h3 style="font-family:'Fraunces',Georgia,serif;font-size:1.2rem;margin-bottom:1.5rem">Question types</h3>
+
+                <div style="display:flex;flex-direction:column;gap:1rem">
+                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem">
+                        <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem">
+                            <span style="font-size:1.25rem">☑</span>
+                            <strong>Multiple Choice</strong>
+                        </div>
+                        <p style="font-size:0.875rem;color:var(--muted);line-height:1.6">Up to any number of options. Results display as a bar chart showing count and percentage per option. Great for comprehension checks, concept votes, or audience polls.</p>
+                    </div>
+                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem">
+                        <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem">
+                            <span style="font-size:1.25rem">⭐</span>
+                            <strong>Rating / Likert Scale</strong>
+                        </div>
+                        <p style="font-size:0.875rem;color:var(--muted);line-height:1.6">Configurable scale (1–5, 1–7, 1–10) with custom min/max labels (e.g. "Strongly disagree" → "Strongly agree"). Results show a histogram and the mean.</p>
+                    </div>
+                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem">
+                        <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem">
+                            <span style="font-size:1.25rem">☁️</span>
+                            <strong>Word Cloud</strong>
+                        </div>
+                        <p style="font-size:0.875rem;color:var(--muted);line-height:1.6">Each respondent contributes a word or short phrase. Results appear as a weighted cloud — the most frequent responses appear largest. Striking to reveal in front of a group.</p>
+                    </div>
+                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem">
+                        <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem">
+                            <span style="font-size:1.25rem">✏️</span>
+                            <strong>Short Text</strong>
+                        </div>
+                        <p style="font-size:0.875rem;color:var(--muted);line-height:1.6">Open-ended responses up to 500 characters. Results display as a scrolling list of all responses — ideal for reflections, muddiest-point prompts, or open feedback.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Course vs Public comparison -->
+        <div style="max-width:760px;margin:3rem auto 0;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:2rem">
+            <div style="font-size:0.75rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:1.25rem">Course session vs. Public session</div>
+            <table style="width:100%;border-collapse:collapse;font-size:0.875rem">
+                <thead>
+                    <tr style="border-bottom:2px solid var(--border)">
+                        <th style="text-align:left;padding:0.5rem 0.75rem;color:var(--muted);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em"> </th>
+                        <th style="text-align:left;padding:0.5rem 0.75rem;color:var(--muted);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">🔒 Course only</th>
+                        <th style="text-align:left;padding:0.5rem 0.75rem;color:var(--muted);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">🌐 Public</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:0.75rem;font-weight:600;white-space:nowrap">Who can respond</td>
+                        <td style="padding:0.75rem;color:var(--muted)">Enrolled students (session required)</td>
+                        <td style="padding:0.75rem;color:var(--muted)">Anyone with the link or QR code — no login</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:0.75rem;font-weight:600;white-space:nowrap">Share method</td>
+                        <td style="padding:0.75rem;color:var(--muted)">Visible in student sidebar when active</td>
+                        <td style="padding:0.75rem;color:var(--muted)">Short URL (<code>/p/XXXXXXXX</code>) + auto-generated QR code</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:0.75rem;font-weight:600;white-space:nowrap">Deduplication</td>
+                        <td style="padding:0.75rem;color:var(--muted)">Authenticated — one response per student per question (updates on re-submit)</td>
+                        <td style="padding:0.75rem;color:var(--muted)">Fully anonymous — no tracking, no deduplication</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem;font-weight:600;white-space:nowrap">Best for</td>
+                        <td style="padding:0.75rem;color:var(--muted)">In-class formative checks, exit tickets, Likert surveys</td>
+                        <td style="padding:0.75rem;color:var(--muted)">Conference workshops, open lectures, community events</td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </div>
 </section>

@@ -14,6 +14,9 @@ RewriteRule ^api/(.*)$ api.php/$1 [L,QSA]
 # Pass /lti* through to lti.php
 RewriteRule ^lti(.*)$ lti.php$1 [L,QSA]
 
+# Public pulse checks (/p/{token} → pulse-public.php)
+RewriteRule ^p/(.*)$ pulse-public.php?token=$1 [L,QSA]
+
 # Everything else (including /auth/*, /join, /login) → index.php (SPA)
 RewriteRule ^(.*)$ index.php [L,QSA]
 

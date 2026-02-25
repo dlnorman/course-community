@@ -195,6 +195,25 @@ function route(string $method, array $seg, array $body): void {
         // Invite codes (standalone courses)
         $s === 'invite-codes'                                  => handleInviteCodes($method, $id, $body),
 
+        // Pulse Checks
+        $s === 'pulse' && !$id && $method === 'GET'            => handlePulseList(),
+        $s === 'pulse' && !$id && $method === 'POST'           => handleCreatePulse($body),
+        $s === 'pulse' && $id && $sub === 'questions'          => handleAddPulseQuestion($id, $body),
+        $s === 'pulse' && $id && $sub === 'results'            => handlePulseAllResults($id),
+        $s === 'pulse' && $id && !$sub                         => handlePulse($method, $id, $body),
+
+        // Pulse Questions
+        $s === 'pulse-questions' && $id && $sub === 'open'     => handlePulseQuestionOpen($id),
+        $s === 'pulse-questions' && $id && $sub === 'reveal'   => handlePulseQuestionReveal($id),
+        $s === 'pulse-questions' && $id && $sub === 'respond'  => handlePulseRespond($id, $body),
+        $s === 'pulse-questions' && $id && $sub === 'results'  => handleQuestionResults($id),
+        $s === 'pulse-questions' && $id && !$sub               => handlePulseQuestion($method, $id, $body),
+
+        // Public pulse (token-based, no auth)
+        // /api/pulse-public/{token}/{qid}/respond
+        $s === 'pulse-public' && ($seg[1] ?? '') && $sub && ($seg[3] ?? '') => handlePublicPulseAction($seg[1] ?? '', (int)$sub, $seg[3] ?? '', $body),
+        $s === 'pulse-public' && ($seg[1] ?? '') && !$sub      => handlePublicPulse($seg[1] ?? ''),
+
         default => jsonError(404, 'Not found'),
     };
 }
@@ -2146,6 +2165,487 @@ function handleReview(string $method, int $raId, array $body): void {
     }
 
     jsonError(405, 'Method not allowed');
+}
+
+// ── Pulse Checks ──────────────────────────────────────────────────────────────
+
+function handlePulseList(): void {
+    $s = requireAuth();
+    if ($s['role'] === 'instructor') {
+        $checks = dbAll(
+            'SELECT pc.*, u.name AS creator_name,
+                    (SELECT COUNT(*) FROM pulse_questions WHERE check_id=pc.id) AS question_count
+             FROM pulse_checks pc
+             JOIN users u ON u.id = pc.created_by
+             WHERE pc.course_id = ?
+             ORDER BY pc.created_at DESC',
+            [$s['cid']]
+        );
+    } else {
+        $checks = dbAll(
+            "SELECT pc.*, u.name AS creator_name,
+                    (SELECT COUNT(*) FROM pulse_questions WHERE check_id=pc.id) AS question_count
+             FROM pulse_checks pc
+             JOIN users u ON u.id = pc.created_by
+             WHERE pc.course_id = ? AND pc.status = 'active'
+             ORDER BY pc.created_at DESC",
+            [$s['cid']]
+        );
+    }
+    json($checks);
+}
+
+function handleCreatePulse(array $body): void {
+    $s = requireAuth();
+    requireInstructor($s);
+    $title  = trim($body['title'] ?? '');
+    $access = in_array($body['access'] ?? '', ['course', 'public']) ? $body['access'] : 'course';
+    if (!$title) jsonError(400, 'Title is required');
+
+    // Generate unique share_token
+    $token = null;
+    if ($access === 'public') {
+        for ($i = 0; $i < 10; $i++) {
+            $candidate = generateInviteCode();
+            $exists = dbOne('SELECT id FROM pulse_checks WHERE share_token=?', [$candidate]);
+            if (!$exists) { $token = $candidate; break; }
+        }
+        if (!$token) jsonError(500, 'Could not generate share token');
+    }
+
+    $id = dbExec(
+        'INSERT INTO pulse_checks (course_id, created_by, title, access, share_token) VALUES (?, ?, ?, ?, ?)',
+        [$s['cid'], $s['uid'], $title, $access, $token]
+    );
+    $check = dbOne('SELECT * FROM pulse_checks WHERE id=?', [$id]);
+    json($check, 201);
+}
+
+function handlePulse(string $method, int $id, array $body): void {
+    $s = requireAuth();
+    $check = dbOne('SELECT * FROM pulse_checks WHERE id=? AND course_id=?', [$id, $s['cid']]);
+    if (!$check) jsonError(404, 'Pulse check not found');
+
+    if ($method === 'GET') {
+        $questions = dbAll(
+            'SELECT * FROM pulse_questions WHERE check_id=? ORDER BY sort_order ASC, id ASC',
+            [$id]
+        );
+        foreach ($questions as &$q) {
+            $q['options'] = $q['options_json'] ? json_decode($q['options_json'], true) : null;
+            unset($q['options_json']);
+        }
+        // Return IDs of questions this user has already answered
+        $myResponses = [];
+        if ($s['uid']) {
+            $rows = dbAll(
+                'SELECT pq.id AS question_id, pr.response
+                 FROM pulse_responses pr
+                 JOIN pulse_questions pq ON pq.id = pr.question_id
+                 WHERE pq.check_id = ? AND pr.user_id = ?',
+                [$id, $s['uid']]
+            );
+            foreach ($rows as $r) {
+                $myResponses[$r['question_id']] = $r['response'];
+            }
+        }
+        json(['check' => $check, 'questions' => $questions, 'my_responses' => $myResponses]);
+        return;
+    }
+
+    if ($method === 'PUT') {
+        requireInstructor($s);
+        $fields = [];
+        $params = [];
+        if (isset($body['title'])) { $fields[] = 'title=?'; $params[] = trim($body['title']); }
+        if (isset($body['access']) && in_array($body['access'], ['course', 'public'])) {
+            $fields[] = 'access=?'; $params[] = $body['access'];
+            // Generate token if switching to public
+            if ($body['access'] === 'public' && !$check['share_token']) {
+                for ($i = 0; $i < 10; $i++) {
+                    $candidate = generateInviteCode();
+                    $exists = dbOne('SELECT id FROM pulse_checks WHERE share_token=?', [$candidate]);
+                    if (!$exists) { $fields[] = 'share_token=?'; $params[] = $candidate; break; }
+                }
+            }
+        }
+        if (isset($body['status']) && in_array($body['status'], ['draft', 'active', 'closed'])) {
+            $fields[] = 'status=?'; $params[] = $body['status'];
+        }
+        if ($fields) {
+            $params[] = $id;
+            dbRun('UPDATE pulse_checks SET ' . implode(', ', $fields) . ' WHERE id=?', $params);
+        }
+        $check = dbOne('SELECT * FROM pulse_checks WHERE id=?', [$id]);
+        json($check);
+        return;
+    }
+
+    if ($method === 'DELETE') {
+        requireInstructor($s);
+        // Cascade delete
+        $qIds = dbAll('SELECT id FROM pulse_questions WHERE check_id=?', [$id]);
+        foreach ($qIds as $q) {
+            dbRun('DELETE FROM pulse_responses WHERE question_id=?', [$q['id']]);
+        }
+        dbRun('DELETE FROM pulse_questions WHERE check_id=?', [$id]);
+        dbRun('DELETE FROM pulse_checks WHERE id=?', [$id]);
+        json(['ok' => true]);
+        return;
+    }
+
+    jsonError(405, 'Method not allowed');
+}
+
+function handleAddPulseQuestion(int $checkId, array $body): void {
+    $s = requireAuth();
+    requireInstructor($s);
+    $check = dbOne('SELECT * FROM pulse_checks WHERE id=? AND course_id=?', [$checkId, $s['cid']]);
+    if (!$check) jsonError(404, 'Pulse check not found');
+
+    $question = trim($body['question'] ?? '');
+    $type     = $body['type'] ?? '';
+    if (!$question) jsonError(400, 'Question text required');
+    if (!in_array($type, ['choice', 'text', 'rating', 'wordcloud'])) {
+        jsonError(400, 'Invalid question type');
+    }
+
+    $options = null;
+    if ($type === 'choice') {
+        $opts = array_values(array_filter(array_map('trim', $body['options'] ?? []), fn($o) => $o !== ''));
+        if (count($opts) < 2) jsonError(400, 'Choice questions need at least 2 options');
+        $options = json_encode($opts);
+    } elseif ($type === 'rating') {
+        $options = json_encode([
+            'min'       => (int)($body['min'] ?? 1),
+            'max'       => (int)($body['max'] ?? 5),
+            'min_label' => trim($body['min_label'] ?? ''),
+            'max_label' => trim($body['max_label'] ?? ''),
+        ]);
+    }
+
+    $sortOrder = (int)(dbOne('SELECT MAX(sort_order) AS m FROM pulse_questions WHERE check_id=?', [$checkId])['m'] ?? 0) + 1;
+    $qId = dbExec(
+        'INSERT INTO pulse_questions (check_id, question, type, options_json, sort_order) VALUES (?, ?, ?, ?, ?)',
+        [$checkId, $question, $type, $options, $sortOrder]
+    );
+    $q = dbOne('SELECT * FROM pulse_questions WHERE id=?', [$qId]);
+    $q['options'] = $q['options_json'] ? json_decode($q['options_json'], true) : null;
+    unset($q['options_json']);
+    json($q, 201);
+}
+
+function handlePulseAllResults(int $checkId): void {
+    $s = requireAuth();
+    requireInstructor($s);
+    $check = dbOne('SELECT * FROM pulse_checks WHERE id=? AND course_id=?', [$checkId, $s['cid']]);
+    if (!$check) jsonError(404, 'Pulse check not found');
+
+    $questions = dbAll(
+        'SELECT * FROM pulse_questions WHERE check_id=? ORDER BY sort_order ASC, id ASC',
+        [$checkId]
+    );
+    $results = [];
+    foreach ($questions as $q) {
+        $q['options'] = $q['options_json'] ? json_decode($q['options_json'], true) : null;
+        unset($q['options_json']);
+        $results[] = [
+            'question' => $q,
+            'results'  => aggregateResponses($q['id'], $q),
+            'count'    => (int)(dbOne('SELECT COUNT(*) AS n FROM pulse_responses WHERE question_id=?', [$q['id']])['n'] ?? 0),
+        ];
+    }
+    json(['check' => $check, 'results' => $results]);
+}
+
+function handlePulseQuestion(string $method, int $qId, array $body): void {
+    $s = requireAuth();
+    requireInstructor($s);
+    $q = dbOne(
+        'SELECT pq.*, pc.course_id FROM pulse_questions pq
+         JOIN pulse_checks pc ON pc.id = pq.check_id
+         WHERE pq.id=?',
+        [$qId]
+    );
+    if (!$q || $q['course_id'] != $s['cid']) jsonError(404, 'Question not found');
+
+    if ($method === 'PUT') {
+        $fields = [];
+        $params = [];
+        if (isset($body['question'])) { $fields[] = 'question=?'; $params[] = trim($body['question']); }
+        if (isset($body['options_json'])) { $fields[] = 'options_json=?'; $params[] = $body['options_json']; }
+        if ($fields) { $params[] = $qId; dbRun('UPDATE pulse_questions SET ' . implode(', ', $fields) . ' WHERE id=?', $params); }
+        $q = dbOne('SELECT * FROM pulse_questions WHERE id=?', [$qId]);
+        $q['options'] = $q['options_json'] ? json_decode($q['options_json'], true) : null;
+        unset($q['options_json']);
+        json($q);
+        return;
+    }
+
+    if ($method === 'DELETE') {
+        dbRun('DELETE FROM pulse_responses WHERE question_id=?', [$qId]);
+        dbRun('DELETE FROM pulse_questions WHERE id=?', [$qId]);
+        json(['ok' => true]);
+        return;
+    }
+
+    jsonError(405, 'Method not allowed');
+}
+
+function handlePulseQuestionOpen(int $qId): void {
+    $s = requireAuth();
+    requireInstructor($s);
+    $q = dbOne(
+        'SELECT pq.*, pc.course_id FROM pulse_questions pq
+         JOIN pulse_checks pc ON pc.id = pq.check_id
+         WHERE pq.id=?',
+        [$qId]
+    );
+    if (!$q || $q['course_id'] != $s['cid']) jsonError(404, 'Question not found');
+    $newVal = $q['is_open'] ? 0 : 1;
+    dbRun('UPDATE pulse_questions SET is_open=? WHERE id=?', [$newVal, $qId]);
+    json(['is_open' => $newVal]);
+}
+
+function handlePulseQuestionReveal(int $qId): void {
+    $s = requireAuth();
+    requireInstructor($s);
+    $q = dbOne(
+        'SELECT pq.*, pc.course_id FROM pulse_checks pc
+         JOIN pulse_questions pq ON pq.check_id = pc.id
+         WHERE pq.id=?',
+        [$qId]
+    );
+    if (!$q || $q['course_id'] != $s['cid']) jsonError(404, 'Question not found');
+    $newVal = $q['results_visible'] ? 0 : 1;
+    dbRun('UPDATE pulse_questions SET results_visible=? WHERE id=?', [$newVal, $qId]);
+    json(['results_visible' => $newVal]);
+}
+
+function handlePulseRespond(int $qId, array $body): void {
+    $s = optionalAuth();
+    $q = dbOne(
+        'SELECT pq.*, pc.course_id, pc.status AS check_status, pc.access
+         FROM pulse_questions pq
+         JOIN pulse_checks pc ON pc.id = pq.check_id
+         WHERE pq.id=?',
+        [$qId]
+    );
+    if (!$q) jsonError(404, 'Question not found');
+    if (!$q['is_open']) jsonError(400, 'This question is not accepting responses');
+    if ($q['check_status'] !== 'active') jsonError(400, 'This pulse check is not active');
+
+    // Auth check: course access requires session; public allows anonymous
+    if ($q['access'] === 'course') {
+        if (!$s || $s['cid'] != $q['course_id']) jsonError(403, 'Not enrolled in this course');
+    }
+
+    $response = trim($body['response'] ?? '');
+    if ($response === '') jsonError(400, 'Response is required');
+
+    // Validate by type
+    $type = $q['type'];
+    if ($type === 'choice') {
+        $opts = json_decode($q['options_json'] ?? '[]', true);
+        if (!isset($opts[(int)$response])) jsonError(400, 'Invalid option');
+        $response = (string)(int)$response;
+    } elseif ($type === 'rating') {
+        $cfg = json_decode($q['options_json'] ?? '{}', true);
+        $val = (int)$response;
+        if ($val < ($cfg['min'] ?? 1) || $val > ($cfg['max'] ?? 5)) jsonError(400, 'Rating out of range');
+        $response = (string)$val;
+    } elseif ($type === 'text') {
+        $response = mb_substr($response, 0, 500);
+    } elseif ($type === 'wordcloud') {
+        $response = mb_strtolower(mb_substr(trim($response), 0, 50));
+    }
+
+    $uid = $s ? $s['uid'] : null;
+
+    if ($uid !== null) {
+        // Authenticated: update if existing response
+        $existing = dbOne('SELECT id FROM pulse_responses WHERE question_id=? AND user_id=?', [$qId, $uid]);
+        if ($existing) {
+            dbRun('UPDATE pulse_responses SET response=?, created_at=? WHERE id=?',
+                  [$response, time(), $existing['id']]);
+        } else {
+            dbExec('INSERT INTO pulse_responses (question_id, user_id, response) VALUES (?, ?, ?)',
+                   [$qId, $uid, $response]);
+        }
+    } else {
+        // Anonymous: always insert
+        dbExec('INSERT INTO pulse_responses (question_id, user_id, response) VALUES (?, NULL, ?)',
+               [$qId, $response]);
+    }
+
+    json(['ok' => true]);
+}
+
+function handleQuestionResults(int $qId): void {
+    $s = optionalAuth();
+    $q = dbOne(
+        'SELECT pq.*, pc.course_id, pc.access
+         FROM pulse_questions pq
+         JOIN pulse_checks pc ON pc.id = pq.check_id
+         WHERE pq.id=?',
+        [$qId]
+    );
+    if (!$q) jsonError(404, 'Question not found');
+
+    $isInstructor = $s && $s['cid'] == $q['course_id'] && $s['role'] === 'instructor';
+
+    if (!$isInstructor && !$q['results_visible']) {
+        jsonError(403, 'Results not yet revealed');
+    }
+    if (!$isInstructor && $q['access'] === 'course' && (!$s || $s['cid'] != $q['course_id'])) {
+        jsonError(403, 'Not enrolled in this course');
+    }
+
+    $q['options'] = $q['options_json'] ? json_decode($q['options_json'], true) : null;
+    unset($q['options_json']);
+    $count = (int)(dbOne('SELECT COUNT(*) AS n FROM pulse_responses WHERE question_id=?', [$qId])['n'] ?? 0);
+    json(['question' => $q, 'results' => aggregateResponses($qId, $q), 'count' => $count]);
+}
+
+function aggregateResponses(int $questionId, array $q): array {
+    $type      = $q['type'];
+    $responses = dbAll('SELECT response FROM pulse_responses WHERE question_id=?', [$questionId]);
+    $total     = count($responses);
+
+    if ($type === 'choice') {
+        $opts   = $q['options'] ?? (json_decode($q['options_json'] ?? '[]', true));
+        $counts = array_fill(0, count($opts), 0);
+        foreach ($responses as $r) {
+            $idx = (int)$r['response'];
+            if (isset($counts[$idx])) $counts[$idx]++;
+        }
+        $result = [];
+        foreach ($opts as $i => $label) {
+            $result[] = [
+                'label'   => $label,
+                'count'   => $counts[$i],
+                'percent' => $total > 0 ? round($counts[$i] / $total * 100) : 0,
+            ];
+        }
+        return $result;
+
+    } elseif ($type === 'rating') {
+        $cfg = $q['options'] ?? (json_decode($q['options_json'] ?? '{}', true));
+        $min = (int)($cfg['min'] ?? 1);
+        $max = (int)($cfg['max'] ?? 5);
+        $counts = array_fill($min, $max - $min + 1, 0);
+        $sum = 0;
+        foreach ($responses as $r) {
+            $v = (int)$r['response'];
+            if ($v >= $min && $v <= $max) {
+                $counts[$v]++;
+                $sum += $v;
+            }
+        }
+        $result = [];
+        for ($v = $min; $v <= $max; $v++) {
+            $result[] = [
+                'value'   => $v,
+                'count'   => $counts[$v],
+                'percent' => $total > 0 ? round($counts[$v] / $total * 100) : 0,
+            ];
+        }
+        return ['bars' => $result, 'mean' => $total > 0 ? round($sum / $total, 2) : null,
+                'min_label' => $cfg['min_label'] ?? '', 'max_label' => $cfg['max_label'] ?? ''];
+
+    } elseif ($type === 'text') {
+        return array_slice(array_map(fn($r) => $r['response'], $responses), 0, 200);
+
+    } elseif ($type === 'wordcloud') {
+        $words = [];
+        foreach ($responses as $r) {
+            $w = strtolower(trim($r['response']));
+            if ($w) $words[$w] = ($words[$w] ?? 0) + 1;
+        }
+        arsort($words);
+        $result = [];
+        foreach ($words as $word => $count) {
+            $result[] = ['word' => $word, 'count' => $count];
+        }
+        return $result;
+    }
+
+    return [];
+}
+
+function handlePublicPulse(string $token): void {
+    if (!$token) jsonError(400, 'Token required');
+    $check = dbOne(
+        "SELECT pc.*, c.title AS course_title
+         FROM pulse_checks pc
+         JOIN courses c ON c.id = pc.course_id
+         WHERE pc.share_token=? AND pc.access='public'",
+        [$token]
+    );
+    if (!$check) jsonError(404, 'Pulse check not found');
+    if ($check['status'] === 'draft') jsonError(404, 'Pulse check not available');
+
+    $questions = dbAll(
+        'SELECT id, question, type, options_json, sort_order, is_open, results_visible
+         FROM pulse_questions WHERE check_id=? ORDER BY sort_order ASC, id ASC',
+        [$check['id']]
+    );
+    foreach ($questions as &$q) {
+        $q['options'] = $q['options_json'] ? json_decode($q['options_json'], true) : null;
+        unset($q['options_json']);
+        if ($q['results_visible']) {
+            $q['results'] = aggregateResponses($q['id'], $q);
+            $q['response_count'] = (int)(dbOne('SELECT COUNT(*) AS n FROM pulse_responses WHERE question_id=?', [$q['id']])['n'] ?? 0);
+        }
+    }
+
+    json(['check' => $check, 'questions' => $questions]);
+}
+
+function handlePublicPulseAction(string $token, int $qId, string $action, array $body): void {
+    if (!$token) jsonError(400, 'Token required');
+    $check = dbOne(
+        "SELECT pc.* FROM pulse_checks pc
+         WHERE pc.share_token=? AND pc.access='public' AND pc.status='active'",
+        [$token]
+    );
+    if (!$check) jsonError(404, 'Pulse check not found or not active');
+
+    if ($action === 'respond' && $qId) {
+        $q = dbOne(
+            'SELECT * FROM pulse_questions WHERE id=? AND check_id=?',
+            [$qId, $check['id']]
+        );
+        if (!$q) jsonError(404, 'Question not found');
+        if (!$q['is_open']) jsonError(400, 'This question is not accepting responses');
+
+        $response = trim($body['response'] ?? '');
+        if ($response === '') jsonError(400, 'Response is required');
+
+        $type = $q['type'];
+        if ($type === 'choice') {
+            $opts = json_decode($q['options_json'] ?? '[]', true);
+            if (!isset($opts[(int)$response])) jsonError(400, 'Invalid option');
+            $response = (string)(int)$response;
+        } elseif ($type === 'rating') {
+            $cfg = json_decode($q['options_json'] ?? '{}', true);
+            $val = (int)$response;
+            if ($val < ($cfg['min'] ?? 1) || $val > ($cfg['max'] ?? 5)) jsonError(400, 'Rating out of range');
+            $response = (string)$val;
+        } elseif ($type === 'text') {
+            $response = mb_substr($response, 0, 500);
+        } elseif ($type === 'wordcloud') {
+            $response = mb_strtolower(mb_substr(trim($response), 0, 50));
+        }
+
+        // Anonymous insert always
+        dbExec('INSERT INTO pulse_responses (question_id, user_id, response) VALUES (?, NULL, ?)',
+               [$qId, $response]);
+        json(['ok' => true]);
+        return;
+    }
+
+    jsonError(404, 'Not found');
 }
 
 function handleFileDownload(int $subId): void {

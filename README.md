@@ -14,6 +14,7 @@ A self-hosted, open-source course community platform that integrates with Bright
 | 🪞 Reflections | Post type for metacognitive writing |
 | 📊 Polls | Anonymous check-ins with live results |
 | 📊 Community Pulse | Instructor analytics: engagement, contributors, silent students |
+| 📡 Pulse Checks | Live audience response — multiple choice, ratings, word clouds, short text; QR code for public sessions |
 | 🔔 Notifications | Real-time reply and mention alerts |
 | 🔁 Peer Feedback | Full anonymous peer review workflow with file uploads |
 | 🛡️ Community Moderation | Graduated flag-and-review system with audit log |
@@ -329,6 +330,44 @@ Instructors can create structured peer review assignments within any course.
 
 ---
 
+## Pulse Checks
+
+Live audience response sessions — run during class, a workshop, or a conference. Instructors create a set of questions, open them one at a time, and choose when to reveal results.
+
+### Question types
+
+| Type | Input | Results display |
+|---|---|---|
+| `choice` | Select one option | Bar chart (count + %) |
+| `rating` | Tap a number on a scale | Histogram + mean |
+| `wordcloud` | One word or short phrase | Weighted word cloud |
+| `text` | Free text (max 500 chars) | Scrolling list of responses |
+
+### Workflow
+
+1. **Instructor creates a check** — title, question set, and access level (course or public).
+2. **Activate** — the check becomes visible to enrolled students. Public checks also generate a short URL (`/p/XXXXXXXX`) and QR code.
+3. **Open questions one at a time** — students and audience members see each question and respond.
+4. **Reveal results** — the instructor decides when results are visible to respondents.
+5. **Close** — no new responses accepted. Results remain visible.
+
+### Course sessions vs. Public sessions
+
+| | Course only | Public |
+|---|---|---|
+| Who can respond | Enrolled students (requires login) | Anyone with the URL or QR code — no login |
+| Share | Badge appears in student sidebar | Short URL + auto-generated QR code in presenter view |
+| Deduplication | One response per student per question (updates on re-submit) | Fully anonymous — no tracking, no deduplication |
+| Best for | In-class checks, exit tickets, Likert surveys | Conference talks, open lectures, workshops |
+
+### Privacy
+
+- Authenticated responses are deduplicated server-side — re-submitting updates the existing response rather than adding a duplicate.
+- Public/anonymous responses have no server-side deduplication; a browser-side localStorage flag prevents accidental double-submission in the UI only.
+- Response data is scoped to the course and never exposed cross-course.
+
+---
+
 ## Community Moderation
 
 A graduated, community-assisted moderation system designed to keep the space respectful without turning the instructor into a surveillance authority.
@@ -410,6 +449,7 @@ course-community/
 ├── api.php             ← JSON REST API (all endpoints)
 ├── index.php           ← App shell / SPA (serves landing page to unauthenticated visitors)
 ├── landing.php         ← Public info/integration guide (included by index.php)
+├── pulse-public.php    ← Public pulse check page (no auth, served at /p/{token})
 ├── admin.php           ← Admin panel (protected by ADMIN_PASSWORD)
 ├── thumbnail.png       ← 800×800 app thumbnail
 ├── .htaccess           ← Apache rewrite rules + security headers
@@ -449,6 +489,9 @@ pf_review_assignments — reviewer-to-submission mapping
 pf_responses     — completed review responses
 flags            — content reports (one per user per item)
 moderation_log   — full audit trail of instructor moderation actions
+pulse_checks     — live response sessions (title, access, status, share_token)
+pulse_questions  — questions within a check (type, options, open/reveal flags)
+pulse_responses  — individual responses (user_id NULL for anonymous/public)
 ```
 
 ---
