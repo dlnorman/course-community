@@ -81,11 +81,12 @@ const router = {
             window._docCleanup();
             window._docCleanup = null;
         }
-        // Clean up pulse polling timer
+        // Clean up pulse polling timer and in-progress form state
         if (state._pulseTimer) {
             clearInterval(state._pulseTimer);
             state._pulseTimer = null;
         }
+        _pulseFormTouched.clear();
         history.pushState({}, '', this.base + path);
         this.handle(path);
     },
@@ -3891,7 +3892,17 @@ async function loadPulseDetail(id, silent = false) {
                 }
             }
         } else {
-            // Soft update: refresh individual question states
+            // Soft update: refresh individual question states without touching user input
+            if (state.role !== 'instructor') {
+                const area = document.getElementById('pulse-questions-area');
+                const hasCards = area && !!area.querySelector('.pulse-question-card');
+                const hasOpenQs = questions.some(q => q.is_open);
+                if (!hasCards && hasOpenQs && area) {
+                    // Transition from "waiting for instructor" → show question cards
+                    area.innerHTML = questions.map(q => renderQuestionResponseCard(q, my_responses[q.id])).join('');
+                    return;
+                }
+            }
             questions.forEach(q => refreshQuestionCard(q, my_responses));
         }
     } catch (e) {
@@ -4029,12 +4040,12 @@ function renderResponseForm(q) {
     }
     if (q.type === 'text') {
         return `<textarea class="form-input" id="ptext-${q.id}" placeholder="Type your response…" maxlength="500" rows="3"
-                    oninput="document.getElementById('psubmit-${q.id}').disabled = !this.value.trim()"></textarea>
+                    oninput="touchPulseForm(${q.id});document.getElementById('psubmit-${q.id}').disabled = !this.value.trim()"></textarea>
                 <button class="btn btn-primary btn-sm" id="psubmit-${q.id}" style="margin-top:0.5rem" onclick="submitPulseResponse(${q.id}, 'text')" disabled>Submit</button>`;
     }
     if (q.type === 'wordcloud') {
         return `<input type="text" class="form-input" id="ptext-${q.id}" placeholder="One word or short phrase…" maxlength="50"
-                    oninput="document.getElementById('psubmit-${q.id}').disabled = !this.value.trim()">
+                    oninput="touchPulseForm(${q.id});document.getElementById('psubmit-${q.id}').disabled = !this.value.trim()">
                 <button class="btn btn-primary btn-sm" id="psubmit-${q.id}" style="margin-top:0.5rem" onclick="submitPulseResponse(${q.id}, 'wordcloud')" disabled>Submit</button>`;
     }
     return '';
@@ -4113,11 +4124,14 @@ async function refreshQuestionCard(q, myResponses) {
     if (q.results_visible) {
         const resDiv = document.getElementById('qresult-' + q.id);
         if (!resDiv) {
-            // results just revealed: replace body
+            // results just revealed: replace body (intentional, regardless of in-progress input)
             bodyDiv.innerHTML = `<div id="qresult-${q.id}">${loadingInline()}</div>`;
+            _pulseFormTouched.delete(q.id);
         }
         loadAndShowStudentResults(q.id);
     } else if (q.is_open && !myResp) {
+        // Never overwrite if the student has started interacting with this form
+        if (_pulseFormTouched.has(q.id)) return;
         if (!bodyDiv.querySelector('.pulse-choice-options, .pulse-rating-scale, textarea, input[type=text]')) {
             bodyDiv.innerHTML = renderResponseForm(q);
         }
@@ -4144,8 +4158,13 @@ async function loadAndShowStudentResults(qId) {
 
 const _pulseChoices = {};
 const _pulseRatings = {};
+// Track questions the student has started interacting with (but not yet submitted)
+// so the polling refresh never wipes in-progress input
+const _pulseFormTouched = new Set();
+window.touchPulseForm = function(qId) { _pulseFormTouched.add(+qId); };
 
 window.selectPulseChoice = function(btn, qId, idx) {
+    _pulseFormTouched.add(+qId);
     const card = document.getElementById('pqcard-' + qId);
     card?.querySelectorAll('.pulse-choice-btn').forEach(b => b.classList.remove('selected'));
     btn.classList.add('selected');
@@ -4155,6 +4174,7 @@ window.selectPulseChoice = function(btn, qId, idx) {
 };
 
 window.selectPulseRating = function(btn, qId, val) {
+    _pulseFormTouched.add(+qId);
     const card = document.getElementById('pqcard-' + qId);
     card?.querySelectorAll('.pulse-rating-btn').forEach(b => b.classList.remove('selected'));
     btn.classList.add('selected');
@@ -4178,6 +4198,7 @@ window.submitPulseResponse = async function(qId, type) {
 
     try {
         await api.post(`/api/pulse-questions/${qId}/respond`, { response });
+        _pulseFormTouched.delete(qId);
         const bodyDiv = document.getElementById('pqbody-' + qId);
         if (bodyDiv) {
             bodyDiv.innerHTML = `<div class="pulse-submitted-msg">✓ Response recorded</div>

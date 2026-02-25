@@ -646,15 +646,14 @@ $_currentUrlJson = json_encode($_currentUrl);
         return { choice: 'Multiple Choice', text: 'Short Text', rating: 'Rating', wordcloud: 'Word Cloud' }[t] || t;
     }
 
-    function renderQuestion(q, idx, responded) {
+    // Renders only the interactive body of a question (no outer card wrapper)
+    function renderQuestionBody(q, responded) {
         const opts = q.options;
-        let formHtml = '';
-
         if (q.results_visible && q.results) {
-            formHtml = renderResults(q, q.results);
+            return renderResults(q, q.results);
         } else if (q.is_open && !responded) {
             if (q.type === 'choice' && Array.isArray(opts)) {
-                formHtml = `<div class="pub-choice-options">` +
+                return `<div class="pub-choice-options">` +
                     opts.map((o, i) => `
                         <button class="pub-choice-btn" onclick="selectChoice(this, ${q.id}, ${i})" data-idx="${i}">
                             <span class="pub-choice-letter">${String.fromCharCode(65+i)}</span>
@@ -662,38 +661,37 @@ $_currentUrlJson = json_encode($_currentUrl);
                         </button>`).join('') +
                     `</div>
                     <button class="pub-submit-btn" id="submit-${q.id}" onclick="submitResponse(${q.id}, 'choice')" disabled>Submit</button>`;
-
             } else if (q.type === 'rating' && opts) {
                 const min = opts.min ?? 1, max = opts.max ?? 5;
                 const btns = [];
                 for (let v = min; v <= max; v++) {
                     btns.push(`<button class="pub-rating-btn" onclick="selectRating(this, ${q.id}, ${v})" data-val="${v}">${v}</button>`);
                 }
-                formHtml = `<div class="pub-rating-wrap">
+                return `<div class="pub-rating-wrap">
                     ${opts.min_label || opts.max_label ? `<div class="pub-rating-labels"><span>${esc(opts.min_label||'')}</span><span>${esc(opts.max_label||'')}</span></div>` : ''}
                     <div class="pub-rating-scale">${btns.join('')}</div>
                 </div>
                 <button class="pub-submit-btn" id="submit-${q.id}" onclick="submitResponse(${q.id}, 'rating')" disabled>Submit</button>`;
-
             } else if (q.type === 'text') {
-                formHtml = `<textarea class="pub-text-input" id="text-${q.id}" placeholder="Type your response…" maxlength="500" oninput="document.getElementById('submit-${q.id}').disabled = !this.value.trim()"></textarea>
+                return `<textarea class="pub-text-input" id="text-${q.id}" placeholder="Type your response…" maxlength="500" oninput="document.getElementById('submit-${q.id}').disabled = !this.value.trim()"></textarea>
                     <br>
                     <button class="pub-submit-btn" id="submit-${q.id}" onclick="submitResponse(${q.id}, 'text')" disabled>Submit</button>`;
-
             } else if (q.type === 'wordcloud') {
-                formHtml = `<input type="text" class="pub-text-input" style="min-height:0;height:46px" id="text-${q.id}" placeholder="One word or short phrase…" maxlength="50" oninput="document.getElementById('submit-${q.id}').disabled = !this.value.trim()">
+                return `<input type="text" class="pub-text-input" style="min-height:0;height:46px" id="text-${q.id}" placeholder="One word or short phrase…" maxlength="50" oninput="document.getElementById('submit-${q.id}').disabled = !this.value.trim()">
                     <br>
                     <button class="pub-submit-btn" id="submit-${q.id}" onclick="submitResponse(${q.id}, 'wordcloud')" disabled>Submit</button>`;
             }
+            return '';
         } else if (q.is_open && responded) {
-            formHtml = `<div class="pub-submitted-msg">✓ Response recorded</div>`;
-            if (!q.results_visible) {
-                formHtml += `<div class="pub-awaiting-msg">Awaiting results from instructor…</div>`;
-            }
-        } else if (!q.is_open) {
-            formHtml = `<div class="pub-waiting-card">Waiting for instructor to open this question…</div>`;
+            let html = `<div class="pub-submitted-msg">✓ Response recorded</div>`;
+            if (!q.results_visible) html += `<div class="pub-awaiting-msg">Awaiting results from instructor…</div>`;
+            return html;
+        } else {
+            return `<div class="pub-waiting-card">Waiting for instructor to open this question…</div>`;
         }
+    }
 
+    function renderQuestion(q, idx, responded) {
         return `
         <div class="pub-question-card" id="qcard-${q.id}" data-qid="${q.id}">
             <div class="pub-q-header">
@@ -701,7 +699,7 @@ $_currentUrlJson = json_encode($_currentUrl);
                 <div class="pub-q-text">${esc(q.question)}</div>
                 <span class="pub-q-type">${esc(typeLabel(q.type))}</span>
             </div>
-            <div id="qbody-${q.id}">${formHtml}</div>
+            <div id="qbody-${q.id}">${renderQuestionBody(q, responded)}</div>
         </div>`;
     }
 
@@ -773,16 +771,55 @@ $_currentUrlJson = json_encode($_currentUrl);
             return;
         }
 
-        const openQs = questions.filter(q => q.is_open);
-        if (!openQs.length) {
-            area.innerHTML = `<div class="pub-waiting-card">
-                <div style="font-size:2rem;margin-bottom:0.5rem">📡</div>
-                <p>Waiting for the instructor to open the first question…</p>
-            </div>`;
+        const hasCards = !!area.querySelector('.pub-question-card');
+        const openQs   = questions.filter(q => q.is_open);
+
+        if (!hasCards) {
+            // No cards yet — initial state
+            if (!openQs.length) {
+                // Still waiting; only set the message if not already showing it
+                if (!area.querySelector('.pub-waiting-card')) {
+                    area.innerHTML = `<div class="pub-waiting-card">
+                        <div style="font-size:2rem;margin-bottom:0.5rem">📡</div>
+                        <p>Waiting for the instructor to open the first question…</p>
+                    </div>`;
+                }
+                return;
+            }
+            // First question(s) just opened — full initial render
+            area.innerHTML = questions.map((q, i) => renderQuestion(q, i, getResponded(q.id))).join('');
             return;
         }
 
-        area.innerHTML = questions.map((q, i) => renderQuestion(q, i, getResponded(q.id))).join('');
+        // Cards already exist — smart per-question update; never clobber in-progress input
+        questions.forEach((q, i) => {
+            const responded = getResponded(q.id);
+            const bodyEl    = document.getElementById('qbody-' + q.id);
+
+            if (!bodyEl) {
+                // Question card doesn't exist yet — append it
+                const tmp = document.createElement('div');
+                tmp.innerHTML = renderQuestion(q, i, responded);
+                area.appendChild(tmp.firstElementChild);
+                return;
+            }
+
+            const hasResults   = !!bodyEl.querySelector('.pub-results');
+            const hasForm      = !!bodyEl.querySelector('input, textarea, .pub-choice-btn, .pub-rating-btn');
+            const hasSubmitted = !!bodyEl.querySelector('.pub-submitted-msg');
+
+            if (q.results_visible && q.results && !hasResults) {
+                // Results just revealed — always safe to show them
+                bodyEl.innerHTML = renderResults(q, q.results);
+            } else if (q.is_open && responded && !hasSubmitted && !hasResults) {
+                // User submitted (localStorage) but UI hasn't updated yet
+                bodyEl.innerHTML = renderQuestionBody(q, responded);
+            } else if (q.is_open && !responded && !q.results_visible && !hasForm && !hasSubmitted) {
+                // Question just opened and body is still "waiting" text — show form
+                bodyEl.innerHTML = renderQuestionBody(q, responded);
+            }
+            // In all other cases: leave the body alone (user may be actively filling it out)
+        });
     }
 
     // ── Poll for updates ──────────────────────────────────────────────
