@@ -522,6 +522,7 @@ const views = {
         setView(loadingInline());
         try {
             const post = await api.get(`/api/posts/${postId}`);
+            state.viewData = { post };
             const space = state.spaces.find(s => s.id === post.space_id);
             setView(renderPostDetail(post, space));
             bindPostDetailEvents(post);
@@ -2044,7 +2045,46 @@ window.deletePost = async (postId) => {
 };
 
 window.editPost = (postId) => {
-    toast('Edit functionality — coming soon in full version');
+    const post = state.viewData?.post;
+    if (!post || post.id !== postId) { toast('Could not load post data'); return; }
+
+    openModal(`
+    <div class="modal-header">
+        <div class="modal-title">Edit Post</div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+        <div class="form-group">
+            <label class="form-label" for="edit-post-title">Title</label>
+            <input type="text" class="form-input" id="edit-post-title"
+                   value="${esc(post.title)}" maxlength="200">
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="edit-post-content">Content</label>
+            <textarea class="form-textarea" id="edit-post-content" rows="8">${esc(post.content)}</textarea>
+            <div class="form-hint">Supports **bold**, *italic*, and \`code\` formatting.</div>
+        </div>
+    </div>
+    <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitEditPost(${postId})">Save</button>
+    </div>`);
+};
+
+window.submitEditPost = async (postId) => {
+    const title   = document.getElementById('edit-post-title')?.value.trim();
+    const content = document.getElementById('edit-post-content')?.value.trim();
+    if (!title) { toast('Title is required'); return; }
+    try {
+        await api.put(`/api/posts/${postId}`, { title, content });
+        closeModal();
+        // Refresh the post detail view in place
+        const post = await api.get(`/api/posts/${postId}`);
+        state.viewData = { post };
+        document.getElementById('post-content').innerHTML = renderMarkdown(post.content);
+        document.querySelector('.post-detail-title').textContent = post.title;
+        toast('Post updated');
+    } catch (e) { toast(e.message); }
 };
 
 window.editBio = async (userId) => {
