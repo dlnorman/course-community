@@ -243,6 +243,32 @@ function initSchema(PDO $db): void {
             FOREIGN KEY (course_id)  REFERENCES courses(id),
             FOREIGN KEY (created_by) REFERENCES users(id)
         );
+
+        CREATE TABLE IF NOT EXISTS flags (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            course_id   INTEGER NOT NULL,
+            target_type TEXT    NOT NULL CHECK(target_type IN ('post','comment')),
+            target_id   INTEGER NOT NULL,
+            flagged_by  INTEGER NOT NULL,
+            reason      TEXT    NOT NULL,
+            details     TEXT    NOT NULL DEFAULT '',
+            status      TEXT    NOT NULL DEFAULT 'open',
+            created_at  INTEGER NOT NULL,
+            resolved_at INTEGER,
+            resolved_by INTEGER,
+            UNIQUE(target_type, target_id, flagged_by)
+        );
+
+        CREATE TABLE IF NOT EXISTS moderation_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            course_id   INTEGER NOT NULL,
+            actor_id    INTEGER NOT NULL,
+            target_type TEXT    NOT NULL,
+            target_id   INTEGER NOT NULL,
+            action      TEXT    NOT NULL,
+            note        TEXT    NOT NULL DEFAULT '',
+            created_at  INTEGER NOT NULL
+        );
     ");
 
     // Indexes
@@ -255,6 +281,9 @@ function initSchema(PDO $db): void {
         CREATE INDEX IF NOT EXISTS idx_notifs_user    ON notifications(user_id, course_id, is_read);
         CREATE INDEX IF NOT EXISTS idx_sessions_exp   ON sessions(expires_at);
         CREATE INDEX IF NOT EXISTS idx_docs_course    ON documents(course_id, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_flags_target   ON flags(target_type, target_id, status);
+        CREATE INDEX IF NOT EXISTS idx_flags_course   ON flags(course_id, status);
+        CREATE INDEX IF NOT EXISTS idx_modlog_course  ON moderation_log(course_id, created_at DESC);
     ");
 
     // Peer Feedback Tables
@@ -407,6 +436,24 @@ function migrateSchema(PDO $db): void {
 
         $db->exec('COMMIT');
         $db->exec('PRAGMA foreign_keys=ON');
+    }
+
+    // ── Migration: add moderation columns to posts and comments ─────────────────
+    foreach (['posts', 'comments'] as $t) {
+        $cols = array_column(
+            $db->query("PRAGMA table_info($t)")->fetchAll(PDO::FETCH_ASSOC),
+            'name'
+        );
+        $toAdd = [
+            'mod_status'       => "TEXT NOT NULL DEFAULT 'normal'",
+            'mod_note'         => "TEXT NOT NULL DEFAULT ''",
+            'original_content' => 'TEXT',
+        ];
+        foreach ($toAdd as $col => $def) {
+            if (!in_array($col, $cols)) {
+                try { $db->exec("ALTER TABLE $t ADD COLUMN $col $def"); } catch (\Throwable $e) {}
+            }
+        }
     }
 }
 

@@ -16,6 +16,7 @@ A self-hosted, open-source course community platform that integrates with Bright
 | 📊 Community Pulse | Instructor analytics: engagement, contributors, silent students |
 | 🔔 Notifications | Real-time reply and mention alerts |
 | 🔁 Peer Feedback | Full anonymous peer review workflow with file uploads |
+| 🛡️ Community Moderation | Graduated flag-and-review system with audit log |
 | 🔒 Admin Panel | Course management, backup & restore, file cleanup |
 
 ---
@@ -328,6 +329,42 @@ Instructors can create structured peer review assignments within any course.
 
 ---
 
+## Community Moderation
+
+A graduated, community-assisted moderation system designed to keep the space respectful without turning the instructor into a surveillance authority.
+
+### How it works
+
+1. **Any student can flag a post or comment** — selecting a reason (inappropriate, harassment, spam, or off-topic) and an optional note. Flags are private; the flagged author is notified and can self-correct.
+2. **Instructors review flagged content** in the **Moderation panel** (🛡️ in the sidebar, visible only to instructors). The queue shows flag counts, reasons, and content excerpts — sorted by flag count and recency.
+3. **Instructors choose a graduated response:**
+   - **Send Note** — private message to the author; no content change
+   - **Hide** — removes the post/comment from view; author sees a private explanation
+   - **Redact** — replaces the content with a neutral placeholder; original is preserved server-side for the instructor's reference
+   - **Restore** — reverses hide or redact, returning content to normal
+   - **Dismiss Flags** — closes the flags without taking action (false alarm, already resolved, etc.)
+4. **Every action is logged** in a full audit trail, viewable in the Moderation panel.
+
+### Visibility rules
+
+| Viewer | Hidden/Redacted content |
+|---|---|
+| Other students | Neutral placeholder: *"This content has been reviewed and is not currently visible."* |
+| Content author | Still sees their own content + an amber notice with the instructor's explanation |
+| Instructor | Sees full content with status badge and flag count |
+
+### Threshold notification
+
+When a single piece of content accumulates **3 or more open flags**, all instructors in the course receive a notification prompting them to review it.
+
+### Privacy
+
+- Flag reports are anonymous to other students
+- Authors cannot see who flagged their content
+- Flag reasons and details are only visible to instructors
+
+---
+
 ## Admin Panel
 
 Access the admin panel at `/admin.php`. Login uses the `ADMIN_PASSWORD` set in `config.php` or the environment.
@@ -410,6 +447,8 @@ pf_assignments   — peer feedback assignments (per course)
 pf_submissions   — student work submissions
 pf_review_assignments — reviewer-to-submission mapping
 pf_responses     — completed review responses
+flags            — content reports (one per user per item)
+moderation_log   — full audit trail of instructor moderation actions
 ```
 
 ---

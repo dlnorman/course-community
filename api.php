@@ -170,6 +170,21 @@ function route(string $method, array $seg, array $body): void {
         $s === 'reviews'  && $id                               => handleReview($method, $id, $body),
         $s === 'file'     && $id                               => handleFileDownload($id),
 
+        // Flagging — any authenticated user
+        $s === 'posts'    && $id && $sub === 'flag'            => handleContentFlag('post', $id, $body),
+        $s === 'comments' && $id && $sub === 'flag'            => handleContentFlag('comment', $id, $body),
+
+        // Moderation actions — instructor only
+        $s === 'posts'    && $id && $sub === 'moderate'        => handleModerate('post', $id, $body),
+        $s === 'comments' && $id && $sub === 'moderate'        => handleModerate('comment', $id, $body),
+
+        // Flag queue + resolve
+        $s === 'flags'    && !$id && $method === 'GET'         => handleFlagsList(),
+        $s === 'flags'    && $id && $sub === 'resolve'         => handleFlagResolve($id, $body),
+
+        // Moderation log
+        $s === 'moderation-log' && $method === 'GET'           => handleModerationLog(),
+
         default => jsonError(404, 'Not found'),
     };
 }
@@ -313,7 +328,7 @@ function handleListPosts(): void {
         array_merge($params, [$limit, $offset])
     );
 
-    // Add user's own vote and reactions
+    // Add user's own vote and reactions; apply mod_status visibility
     foreach ($posts as &$post) {
         $post['meta'] = json_decode($post['meta_json'] ?? '{}', true);
         unset($post['meta_json']);
@@ -322,6 +337,7 @@ function handleListPosts(): void {
         if ($post['type'] === 'poll') {
             $post['poll_results'] = getPollResults($post['id'], $s['uid']);
         }
+        applyModVisibility($post, $s);
     }
     unset($post);
 
@@ -411,10 +427,12 @@ function handlePost(string $method, int $id, array $body): void {
             $comment['vote'] = getUserVote($s['uid'], 'comment', $comment['id']);
             $comment['reactions'] = getReactionCounts('comment', $comment['id'], $s['uid']);
             $comment['replies'] = getCommentReplies($comment['id'], $s['uid']);
+            applyModVisibility($comment, $s);
         }
         unset($comment);
 
         $post['comments'] = $comments;
+        applyModVisibility($post, $s);
 
         json($post);
 
@@ -949,6 +967,7 @@ function getCommentReplies(int $parentId, int $userId): array {
     foreach ($replies as &$r) {
         $r['vote'] = getUserVote($userId, 'comment', $r['id']);
         $r['reactions'] = getReactionCounts('comment', $r['id'], $userId);
+        // Note: replies need session context for proper mod visibility; handled in callers
     }
     return $replies;
 }
@@ -1192,6 +1211,325 @@ function handleDocRaw(int $id): void {
     header('Cache-Control: no-store');
     echo $content;
     exit;
+}
+
+// ── Moderation helpers ────────────────────────────────────────────────────────
+
+/**
+ * Applies mod_status visibility rules to a post or comment array (in-place).
+ * - instructor: sees everything + flag_count badge info
+ * - author: sees own content + mod_notice if hidden/redacted
+ * - others: content replaced with placeholder if hidden/redacted
+ */
+function applyModVisibility(array &$item, array $s): void {
+    $modStatus = $item['mod_status'] ?? 'normal';
+    if ($modStatus === 'normal') {
+        // Still attach flag count for instructors
+        if ($s['role'] === 'instructor') {
+            $type = isset($item['post_id']) ? 'comment' : 'post';
+            $fc = dbOne(
+                "SELECT COUNT(*) AS n FROM flags WHERE target_type=? AND target_id=? AND status='open'",
+                [$type, $item['id']]
+            );
+            $item['flag_count'] = (int)($fc['n'] ?? 0);
+        }
+        return;
+    }
+
+    $isInstructor = $s['role'] === 'instructor';
+    $authorKey = isset($item['author_id']) ? 'author_id' : 'author_id';
+    $isAuthor = (int)($item[$authorKey] ?? 0) === (int)$s['uid'];
+
+    if ($isInstructor) {
+        // Instructor sees full content + flag count
+        $type = isset($item['post_id']) ? 'comment' : 'post';
+        $fc = dbOne(
+            "SELECT COUNT(*) AS n FROM flags WHERE target_type=? AND target_id=? AND status='open'",
+            [$type, $item['id']]
+        );
+        $item['flag_count'] = (int)($fc['n'] ?? 0);
+        return;
+    }
+
+    if ($isAuthor) {
+        // Author sees own content but gets a notice
+        $item['mod_notice'] = true;
+        return;
+    }
+
+    // Everyone else: replace content with placeholder
+    $item['content'] = null;
+    if (isset($item['title'])) {
+        $item['title'] = '[Post under review]';
+    }
+    $item['mod_note'] = null;
+    $item['original_content'] = null;
+}
+
+// ── Flagging ──────────────────────────────────────────────────────────────────
+
+function handleContentFlag(string $type, int $id, array $body): void {
+    $s = requireAuth();
+
+    $validReasons = ['inappropriate', 'harassment', 'spam', 'off_topic'];
+    $reason = trim($body['reason'] ?? '');
+    if (!in_array($reason, $validReasons)) {
+        jsonError(400, 'reason must be one of: ' . implode(', ', $validReasons));
+    }
+    $details = trim($body['details'] ?? '');
+
+    // Verify target exists and belongs to this course
+    if ($type === 'post') {
+        $target = dbOne('SELECT id, author_id, title FROM posts WHERE id=? AND course_id=?', [$id, $s['cid']]);
+    } else {
+        $target = dbOne(
+            'SELECT c.id, c.author_id FROM comments c JOIN posts p ON p.id=c.post_id WHERE c.id=? AND p.course_id=?',
+            [$id, $s['cid']]
+        );
+    }
+    if (!$target) jsonError(404, ucfirst($type) . ' not found');
+
+    // One flag per user per item
+    try {
+        dbExec(
+            'INSERT INTO flags (course_id, target_type, target_id, flagged_by, reason, details, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, \'open\', ?)',
+            [$s['cid'], $type, $id, $s['uid'], $reason, $details, time()]
+        );
+    } catch (\Throwable $e) {
+        if (str_contains($e->getMessage(), 'UNIQUE')) {
+            jsonError(409, 'You have already reported this content.');
+        }
+        throw $e;
+    }
+
+    // Check flag count; notify instructors if threshold reached
+    $flagCount = dbOne(
+        "SELECT COUNT(*) AS n FROM flags WHERE target_type=? AND target_id=? AND status='open'",
+        [$type, $id]
+    );
+    if ((int)$flagCount['n'] >= 3) {
+        $instructors = dbAll(
+            "SELECT u.id FROM users u JOIN enrollments e ON e.user_id=u.id
+             WHERE e.course_id=? AND e.role='instructor'",
+            [$s['cid']]
+        );
+        $excerpt = $type === 'post' ? mb_substr($target['title'] ?? '', 0, 60) : 'a comment';
+        foreach ($instructors as $inst) {
+            notify($inst['id'], $s['cid'], 'flag',
+                "Content has been flagged 3+ times and may need review: \"$excerpt\"",
+                '/#moderation');
+        }
+    }
+
+    // Notify author privately
+    if ((int)$target['author_id'] !== (int)$s['uid']) {
+        $label = $type === 'post' ? 'post' : 'comment';
+        notify($target['author_id'], $s['cid'], 'flag',
+            "Your $label has been flagged as potentially concerning. You can edit or remove it at any time.",
+            $type === 'post' ? '/post/' . $id : '');
+    }
+
+    json(['message' => 'Report submitted']);
+}
+
+// ── Moderation actions ────────────────────────────────────────────────────────
+
+function handleModerate(string $type, int $id, array $body): void {
+    $s = requireAuth();
+    requireInstructor($s);
+
+    $action = trim($body['action'] ?? '');
+    $note   = trim($body['note'] ?? '');
+
+    $validActions = ['hide', 'restore', 'redact', 'send_note'];
+    if (!in_array($action, $validActions)) {
+        jsonError(400, 'action must be one of: ' . implode(', ', $validActions));
+    }
+
+    if ($type === 'post') {
+        $target = dbOne('SELECT * FROM posts WHERE id=? AND course_id=?', [$id, $s['cid']]);
+    } else {
+        $target = dbOne(
+            'SELECT c.*, p.course_id FROM comments c JOIN posts p ON p.id=c.post_id WHERE c.id=? AND p.course_id=?',
+            [$id, $s['cid']]
+        );
+    }
+    if (!$target) jsonError(404, ucfirst($type) . ' not found');
+
+    $table = $type === 'post' ? 'posts' : 'comments';
+    $authorId = (int)$target['author_id'];
+
+    if ($action === 'hide') {
+        dbRun("UPDATE $table SET mod_status='hidden', mod_note=? WHERE id=?", [$note, $id]);
+        if ($authorId) {
+            $msg = "An instructor has reviewed your " . $type . " and it is currently not visible to others.";
+            if ($note) $msg .= " Note: $note";
+            notify($authorId, $s['cid'], 'moderation', $msg,
+                   $type === 'post' ? '/post/' . $id : '');
+        }
+    } elseif ($action === 'restore') {
+        dbRun("UPDATE $table SET mod_status='normal', mod_note='', original_content=NULL WHERE id=?", [$id]);
+    } elseif ($action === 'redact') {
+        $original = $target['content'];
+        dbRun(
+            "UPDATE $table SET original_content=?, content='[Content removed by instructor]', mod_status='redacted', mod_note=? WHERE id=?",
+            [$original, $note, $id]
+        );
+        if ($authorId) {
+            $msg = "An instructor has redacted the content of your " . $type . ".";
+            if ($note) $msg .= " Note: $note";
+            notify($authorId, $s['cid'], 'moderation', $msg,
+                   $type === 'post' ? '/post/' . $id : '');
+        }
+    } elseif ($action === 'send_note') {
+        if ($authorId && $note) {
+            notify($authorId, $s['cid'], 'moderation',
+                   "A private note from your instructor: $note",
+                   $type === 'post' ? '/post/' . $id : '');
+        }
+    }
+
+    // Log the action
+    dbExec(
+        'INSERT INTO moderation_log (course_id, actor_id, target_type, target_id, action, note, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [$s['cid'], $s['uid'], $type, $id, $action, $note, time()]
+    );
+
+    // Mark open flags on this target as actioned (except send_note and restore)
+    if (!in_array($action, ['send_note', 'restore'])) {
+        dbRun(
+            "UPDATE flags SET status='actioned', resolved_at=?, resolved_by=?
+             WHERE target_type=? AND target_id=? AND course_id=? AND status='open'",
+            [time(), $s['uid'], $type, $id, $s['cid']]
+        );
+    }
+
+    json(['ok' => true]);
+}
+
+// ── Flag queue ────────────────────────────────────────────────────────────────
+
+function handleFlagsList(): void {
+    $s = requireAuth();
+    requireInstructor($s);
+
+    // Get open flags grouped by target
+    $rows = dbAll(
+        "SELECT f.target_type, f.target_id,
+                COUNT(*) AS flag_count,
+                GROUP_CONCAT(DISTINCT f.reason) AS reasons,
+                MAX(f.created_at) AS latest_flag_at,
+                MIN(f.id) AS first_flag_id
+         FROM flags f
+         WHERE f.course_id=? AND f.status='open'
+         GROUP BY f.target_type, f.target_id
+         ORDER BY flag_count DESC, latest_flag_at DESC",
+        [$s['cid']]
+    );
+
+    $result = [];
+    foreach ($rows as $row) {
+        $ttype = $row['target_type'];
+        $tid   = (int)$row['target_id'];
+
+        if ($ttype === 'post') {
+            $content = dbOne(
+                'SELECT p.id, p.title, p.content, p.author_id, p.mod_status,
+                        u.name AS author_name
+                 FROM posts p JOIN users u ON u.id=p.author_id
+                 WHERE p.id=?',
+                [$tid]
+            );
+            $excerpt = mb_substr($content['title'] ?? '', 0, 80);
+            $body_excerpt = mb_substr($content['content'] ?? '', 0, 120);
+        } else {
+            $content = dbOne(
+                'SELECT c.id, c.content, c.author_id, c.mod_status,
+                        u.name AS author_name
+                 FROM comments c JOIN users u ON u.id=c.author_id
+                 WHERE c.id=?',
+                [$tid]
+            );
+            $excerpt = mb_substr($content['content'] ?? '', 0, 120);
+            $body_excerpt = '';
+        }
+
+        if (!$content) continue;
+
+        $result[] = [
+            'target_type'    => $ttype,
+            'target_id'      => $tid,
+            'first_flag_id'  => (int)$row['first_flag_id'],
+            'flag_count'     => (int)$row['flag_count'],
+            'reasons'        => array_unique(explode(',', $row['reasons'])),
+            'latest_flag_at' => (int)$row['latest_flag_at'],
+            'content_excerpt'=> $excerpt,
+            'body_excerpt'   => $body_excerpt,
+            'author_name'    => $content['author_name'] ?? '',
+            'author_id'      => (int)($content['author_id'] ?? 0),
+            'mod_status'     => $content['mod_status'] ?? 'normal',
+        ];
+    }
+
+    json($result);
+}
+
+function handleFlagResolve(int $id, array $body): void {
+    $s = requireAuth();
+    requireInstructor($s);
+
+    $flag = dbOne('SELECT * FROM flags WHERE id=? AND course_id=?', [$id, $s['cid']]);
+    if (!$flag) jsonError(404, 'Flag not found');
+
+    $action = trim($body['action'] ?? 'dismiss');
+    $newStatus = $action === 'actioned' ? 'actioned' : 'dismissed';
+
+    // Dismiss/action all flags on the same target
+    dbRun(
+        "UPDATE flags SET status=?, resolved_at=?, resolved_by=?
+         WHERE target_type=? AND target_id=? AND course_id=? AND status='open'",
+        [$newStatus, time(), $s['uid'], $flag['target_type'], $flag['target_id'], $s['cid']]
+    );
+
+    dbExec(
+        'INSERT INTO moderation_log (course_id, actor_id, target_type, target_id, action, note, created_at)
+         VALUES (?, ?, ?, ?, \'dismiss_flags\', \'\', ?)',
+        [$s['cid'], $s['uid'], $flag['target_type'], $flag['target_id'], time()]
+    );
+
+    json(['ok' => true]);
+}
+
+// ── Moderation log ────────────────────────────────────────────────────────────
+
+function handleModerationLog(): void {
+    $s = requireAuth();
+    requireInstructor($s);
+
+    $rows = dbAll(
+        'SELECT ml.id, ml.target_type, ml.target_id, ml.action, ml.note, ml.created_at,
+                u.name AS actor_name
+         FROM moderation_log ml
+         JOIN users u ON u.id=ml.actor_id
+         WHERE ml.course_id=?
+         ORDER BY ml.created_at DESC LIMIT 50',
+        [$s['cid']]
+    );
+
+    foreach ($rows as &$row) {
+        if ($row['target_type'] === 'post') {
+            $t = dbOne('SELECT title FROM posts WHERE id=?', [(int)$row['target_id']]);
+            $row['target_excerpt'] = mb_substr($t['title'] ?? '[deleted]', 0, 60);
+        } else {
+            $t = dbOne('SELECT content FROM comments WHERE id=?', [(int)$row['target_id']]);
+            $row['target_excerpt'] = mb_substr($t['content'] ?? '[deleted]', 0, 60);
+        }
+    }
+    unset($row);
+
+    json($rows);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

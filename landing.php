@@ -214,6 +214,7 @@ $_ltiTarget = $_appBase . '/';
         <div class="nav-links">
             <a href="#features">Features</a>
             <a href="#peer-feedback">Peer Feedback</a>
+            <a href="#moderation">Moderation</a>
             <a href="#design">Principles</a>
             <a href="#integration">LTI Setup</a>
             <a href="#install">Install</a>
@@ -267,6 +268,7 @@ $_ltiTarget = $_appBase . '/';
                     <div class="hv-si">🔁 Peer Review</div>
                     <div class="hv-si">👥 Members</div>
                     <div class="hv-si" style="margin-top:0.5rem">📊 Pulse</div>
+                    <div class="hv-si">🛡️ Moderation</div>
                 </div>
                 <div class="hv-main">
                     <div class="hv-card">
@@ -372,6 +374,12 @@ $_ltiTarget = $_appBase . '/';
                 <p class="feature-desc">A full anonymous peer review workflow: instructors define prompts and configure how many reviewers each submission receives. Students submit text or files; the system load-balances reviewer assignments automatically.</p>
                 <span class="feature-tag" style="background:var(--accent-t);color:var(--accent)">Peer Learning</span>
             </div>
+            <div class="feature-card">
+                <div class="feature-icon">🛡️</div>
+                <div class="feature-title">Community Moderation</div>
+                <p class="feature-desc">A graduated, community-assisted moderation system. Students flag concerning content; instructors review a prioritised queue and choose a proportionate response — send a private note, hide, or redact. Every action is logged for accountability.</p>
+                <span class="feature-tag" style="background:#FFF3CD;color:#92400E">Safety</span>
+            </div>
         </div>
     </div>
 </section>
@@ -476,6 +484,115 @@ $_ltiTarget = $_appBase . '/';
                 </div>
                 <?php endforeach ?>
             </div>
+        </div>
+    </div>
+</section>
+
+<!-- ── Community Moderation ─────────────────────────────────────────── -->
+<section class="section section-alt" id="moderation">
+    <div class="container">
+        <div class="section-header">
+            <div class="section-label">Community Moderation</div>
+            <h2 class="section-title">Graduated, community-driven, accountable</h2>
+            <p class="section-subtitle">Moderation that empowers the community to flag concerns — and gives instructors measured tools to respond — without turning the platform into surveillance.</p>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4rem;align-items:start;max-width:960px;margin:0 auto">
+            <div>
+                <h3 style="font-family:'Fraunces',Georgia,serif;font-size:1.2rem;margin-bottom:1.5rem">How it works</h3>
+                <div class="setup-steps">
+                    <div class="setup-step">
+                        <div class="setup-step-num" style="background:var(--sidebar)">1</div>
+                        <div class="setup-step-content">
+                            <div class="setup-step-title">Student flags content</div>
+                            <div class="setup-step-desc">Any student can flag a post or comment with a reason: inappropriate content, harassment, spam, or off-topic. The report is private. The author is notified privately and can self-correct.</div>
+                        </div>
+                    </div>
+                    <div class="setup-step">
+                        <div class="setup-step-num" style="background:var(--sidebar)">2</div>
+                        <div class="setup-step-content">
+                            <div class="setup-step-title">Instructor reviews the queue</div>
+                            <div class="setup-step-desc">The Moderation panel (instructor-only) shows a prioritised queue of flagged content, sorted by flag count and recency. Each item shows the content excerpt, author, and flag reasons. When three or more flags accumulate, instructors are notified automatically.</div>
+                        </div>
+                    </div>
+                    <div class="setup-step">
+                        <div class="setup-step-num" style="background:var(--sidebar)">3</div>
+                        <div class="setup-step-content">
+                            <div class="setup-step-title">Instructor chooses a proportionate response</div>
+                            <div class="setup-step-desc">Send a private note, hide the content, redact it, or dismiss the flags entirely. Content can always be restored. Every action is logged.</div>
+                        </div>
+                    </div>
+                    <div class="setup-step">
+                        <div class="setup-step-num" style="background:var(--sidebar)">4</div>
+                        <div class="setup-step-content">
+                            <div class="setup-step-title">Audit log records everything</div>
+                            <div class="setup-step-desc">A full chronological log of every moderation action — who did what, to which content, and when — is available to instructors for accountability and review.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <h3 style="font-family:'Fraunces',Georgia,serif;font-size:1.2rem;margin-bottom:1.5rem">Instructor actions</h3>
+
+                <div style="display:flex;flex-direction:column;gap:1rem">
+                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem">
+                        <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem">
+                            <span style="font-size:1.25rem">✉️</span>
+                            <strong>Send Private Note</strong>
+                        </div>
+                        <p style="font-size:0.875rem;color:var(--muted);line-height:1.6">Send a message directly to the author without changing the content. The lightest touch — useful for guidance before escalating.</p>
+                    </div>
+                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem">
+                        <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem">
+                            <span style="font-size:1.25rem">🙈</span>
+                            <strong>Hide</strong>
+                        </div>
+                        <p style="font-size:0.875rem;color:var(--muted);line-height:1.6">Removes the post or comment from view. Others see a neutral placeholder. The author sees their content and your explanation — and can still edit or delete it.</p>
+                    </div>
+                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem">
+                        <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem">
+                            <span style="font-size:1.25rem">✂️</span>
+                            <strong>Redact</strong>
+                        </div>
+                        <p style="font-size:0.875rem;color:var(--muted);line-height:1.6">Replaces the body with "[Content removed by instructor]" while preserving the original server-side. The original can be reviewed and restored at any time.</p>
+                    </div>
+                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem">
+                        <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem">
+                            <span style="font-size:1.25rem">↩️</span>
+                            <strong>Restore / Dismiss</strong>
+                        </div>
+                        <p style="font-size:0.875rem;color:var(--muted);line-height:1.6">Reverse any moderation action and return content to normal, or dismiss flags that turned out to be unfounded. Both actions are recorded in the audit log.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Visibility table -->
+        <div style="max-width:760px;margin:3rem auto 0;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:2rem">
+            <div style="font-size:0.75rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:1.25rem">What each person sees</div>
+            <table style="width:100%;border-collapse:collapse;font-size:0.875rem">
+                <thead>
+                    <tr style="border-bottom:2px solid var(--border)">
+                        <th style="text-align:left;padding:0.5rem 0.75rem;color:var(--muted);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Viewer</th>
+                        <th style="text-align:left;padding:0.5rem 0.75rem;color:var(--muted);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">Hidden or Redacted Content</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:0.75rem;font-weight:600;white-space:nowrap">Other students</td>
+                        <td style="padding:0.75rem;color:var(--muted)">Neutral placeholder: <em>"This content has been reviewed and is not currently visible."</em></td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:0.75rem;font-weight:600;white-space:nowrap">Content author</td>
+                        <td style="padding:0.75rem;color:var(--muted)">Still sees their own content + an amber notice with the instructor's explanation. Can edit or delete at any time.</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.75rem;font-weight:600;white-space:nowrap">Instructor</td>
+                        <td style="padding:0.75rem;color:var(--muted)">Sees full content with a status badge, flag count, and moderation action buttons.</td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </div>
 </section>

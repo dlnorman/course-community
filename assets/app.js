@@ -22,7 +22,8 @@ const state = {
     role:           'student',
     spaces:         [],
     currentSpaceId: null,
-    view:           'feed',   // feed | space | post | board | boards | docs | doc | members | profile | analytics | feedback | feedbackDetail | feedbackReview
+    view:           'feed',   // feed | space | post | board | boards | docs | doc | members | profile | analytics | feedback | feedbackDetail | feedbackReview | moderation
+    flaggedItems:   new Set(), // target_type:target_id pairs flagged by this user
     viewData:       {},       // extra data for current view
     notifications:  [],
     unreadCount:    0,
@@ -106,6 +107,7 @@ const router = {
         }
         if (seg1 === 'docs')   return views.docs();
         if (seg1 === 'doc' && seg2) return views.doc(+seg2);
+        if (seg1 === 'moderation') return views.moderation();
         return views.feed();
     },
 };
@@ -278,6 +280,11 @@ function renderSidebar() {
                 <span class="sidebar-icon" aria-hidden="true">📊</span>
                 <span>Community Pulse</span>
             </div>
+            <div class="sidebar-item ${state.view === 'moderation' ? 'active' : ''}" data-nav="/moderation"
+                 tabindex="0" role="button" ${state.view === 'moderation' ? 'aria-current="page"' : ''}>
+                <span class="sidebar-icon" aria-hidden="true">🛡️</span>
+                <span>Moderation</span>
+            </div>
         </div>` : ''}
     </nav>`;
 }
@@ -311,6 +318,7 @@ function refreshSidebar() {
         if (nav === '/docs' && (state.view === 'docs' || state.view === 'doc')) active = true;
         if (nav === '/members' && state.view === 'members') active = true;
         if (nav === '/analytics' && state.view === 'analytics') active = true;
+        if (nav === '/moderation' && state.view === 'moderation') active = true;
         if (nav === '/feedback' && 'feedback|feedbackDetail|feedbackReview'.includes(state.view)) active = true;
         if (item.dataset.spaceId && +item.dataset.spaceId === state.currentSpaceId) active = true;
         if (active) {
@@ -739,6 +747,21 @@ function renderPostCard(post, showSpaceBadge, delay = 0) {
         </span>`
     ).join('');
 
+    // Moderation visibility
+    const modStatus    = post.mod_status || 'normal';
+    const isInstructor = state.role === 'instructor';
+    const isAuthor     = post.author_id === state.user?.id;
+    const isRedacted   = modStatus !== 'normal' && !isInstructor && !isAuthor;
+
+    if (isRedacted) {
+        return `
+        <article class="post-card" data-post-id="${post.id}" style="animation-delay:${delay * 50}ms">
+            <div class="mod-placeholder">This content has been reviewed and is not currently visible.</div>
+        </article>`;
+    }
+
+    const alreadyFlagged = state.flaggedItems.has(`post:${post.id}`);
+
     return `
     <article class="post-card type-${post.type} ${post.is_pinned ? 'pinned' : ''} ${post.is_featured ? 'featured' : ''} ${post.is_resolved ? 'resolved' : ''}"
              data-post-id="${post.id}"
@@ -756,8 +779,16 @@ function renderPostCard(post, showSpaceBadge, delay = 0) {
             <div class="post-pins">
                 ${post.is_pinned ? '<span class="pin-icon" title="Pinned">📌</span>' : ''}
                 ${post.is_featured ? '<span class="pin-icon" title="Featured">⭐</span>' : ''}
+                ${isInstructor && modStatus !== 'normal' ? `<span class="mod-status-badge ${modStatus}">${modStatus}</span>` : ''}
+                ${isInstructor && post.flag_count > 0 ? `<span class="flag-badge">⚑ ${post.flag_count}</span>` : ''}
             </div>
         </div>
+
+        ${isAuthor && modStatus !== 'normal' ? `
+        <div class="mod-notice" onclick="event.stopPropagation()">
+            <span class="mod-notice-icon">⚠</span>
+            <span>This post has been reviewed by an instructor and is not visible to others.${post.mod_note ? ' ' + esc(post.mod_note) : ''}</span>
+        </div>` : ''}
 
         <h2 class="post-title">${esc(post.title)}</h2>
 
@@ -774,6 +805,11 @@ function renderPostCard(post, showSpaceBadge, delay = 0) {
                 ${post.vote_count ? `<span class="post-stat">▲ ${post.vote_count}</span>` : ''}
                 ${post.comment_count > 0 ? `<span class="post-stat">💬 ${post.comment_count}</span>` : ''}
                 <div class="post-reactions-preview">${reactions}</div>
+                ${!isInstructor ? `
+                <button class="flag-btn ${alreadyFlagged ? 'flagged' : ''}"
+                        ${alreadyFlagged ? 'disabled title="Already reported"' : `onclick="event.stopPropagation();openFlagModal('post',${post.id})" title="Report this post"`}>
+                    ⚑${alreadyFlagged ? ' Reported' : ''}
+                </button>` : ''}
             </div>
         </div>
     </article>`;
@@ -810,6 +846,8 @@ function renderPagination(page, pages) {
 function renderPostDetail(post, space) {
     const isOwner      = post.author_id === state.user.id;
     const isInstructor = state.role === 'instructor';
+    const modStatus    = post.mod_status || 'normal';
+    const isAuthor     = post.author_id === state.user?.id;
     const meta         = post.meta || {};
 
     const EMOJIS = ['👍','❤️','🔥','💡','🤔','😮','🎉','👏','⭐','🙏'];
@@ -833,6 +871,8 @@ function renderPostDetail(post, space) {
                 ${post.is_resolved ? '<span class="comment-answer-badge">✓ Resolved</span>' : ''}
                 ${post.is_pinned   ? '<span class="tag" style="background:var(--warn-tint);color:var(--warn)">📌 Pinned</span>' : ''}
                 ${post.is_featured ? '<span class="tag" style="background:var(--accent-2-tint);color:var(--accent-2)">⭐ Featured</span>' : ''}
+                ${isInstructor && modStatus !== 'normal' ? `<span class="mod-status-badge ${modStatus}">${modStatus}</span>` : ''}
+                ${isInstructor && post.flag_count > 0 ? `<span class="flag-badge">⚑ ${post.flag_count} flag${post.flag_count !== 1 ? 's' : ''}</span>` : ''}
             </div>
 
             <h1 class="post-detail-title">${esc(post.title)}</h1>
@@ -854,7 +894,17 @@ function renderPostDetail(post, space) {
             </div>
         </div>
 
-        <div class="post-detail-content" id="post-content">${renderMarkdown(post.content)}</div>
+        ${isAuthor && modStatus !== 'normal' ? `
+        <div class="mod-notice">
+            <span class="mod-notice-icon">⚠</span>
+            <span>This post has been reviewed by an instructor and is currently not visible to others.${post.mod_note ? ' <strong>Note:</strong> ' + esc(post.mod_note) : ''}</span>
+        </div>` : ''}
+
+        <div class="post-detail-content" id="post-content">
+            ${modStatus !== 'normal' && !isInstructor && !isAuthor
+                ? '<div class="mod-placeholder">This content has been reviewed and is not currently visible.</div>'
+                : renderMarkdown(post.content)}
+        </div>
 
         ${post.type === 'resource' && meta.url ? `
         <a class="resource-link" href="${esc(meta.url)}" target="_blank" rel="noopener">
@@ -896,7 +946,15 @@ function renderPostDetail(post, space) {
                 </button>
                 <button class="btn btn-ghost btn-sm" onclick="toggleFeature(${post.id}, this)" title="Feature post">
                     ${post.is_featured ? '⭐ Unfeature' : '⭐ Feature'}
-                </button>` : ''}
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="openModerateModal('post',${post.id},'${modStatus}')" title="Moderation actions">🛡️ Moderate</button>` : ''}
+                ${!isInstructor ? (() => {
+                    const alreadyFlagged = state.flaggedItems.has(`post:${post.id}`);
+                    return `<button class="flag-btn ${alreadyFlagged ? 'flagged' : ''}"
+                        ${alreadyFlagged ? 'disabled title="Already reported"' : `onclick="openFlagModal('post',${post.id})" title="Report this post"`}>
+                        ⚑${alreadyFlagged ? ' Reported' : ' Report'}
+                    </button>`;
+                })() : ''}
             </div>
         </div>
 
@@ -932,6 +990,20 @@ function renderComment(comment, post, isQA = false) {
     const isOwner      = comment.author_id === state.user.id || comment.author_uid === state.user.id;
     const isInstructor = state.role === 'instructor';
     const canMarkAnswer = (post.author_id === state.user.id || isInstructor) && isQA;
+    const modStatus    = comment.mod_status || 'normal';
+    const isCommentAuthor = (comment.author_id || comment.author_uid) === state.user?.id;
+    const isRedacted   = modStatus !== 'normal' && !isInstructor && !isCommentAuthor;
+    const alreadyFlagged = state.flaggedItems.has(`comment:${comment.id}`);
+
+    if (isRedacted) {
+        return `
+        <div class="comment" id="comment-${comment.id}">
+            <div class="comment-avatar">${avatarEl({name: comment.author_name, picture: comment.author_pic}, 34)}</div>
+            <div class="comment-body">
+                <div class="mod-placeholder" style="margin:0">This response has been reviewed and is not currently visible.</div>
+            </div>
+        </div>`;
+    }
 
     return `
     <div class="comment ${comment.is_answer ? 'is-answer' : ''}" id="comment-${comment.id}">
@@ -942,8 +1014,15 @@ function renderComment(comment, post, isQA = false) {
                 <span class="comment-time">${timeAgo(comment.created_at)}</span>
                 ${comment.is_answer ? '<span class="comment-answer-badge">✓ Accepted Answer</span>' : ''}
                 ${comment.is_instructor_note ? '<span class="instructor-note-badge">Instructor Note</span>' : ''}
+                ${isInstructor && modStatus !== 'normal' ? `<span class="mod-status-badge ${modStatus}">${modStatus}</span>` : ''}
+                ${isInstructor && comment.flag_count > 0 ? `<span class="flag-badge">⚑ ${comment.flag_count}</span>` : ''}
             </div>
-            <div class="comment-content">${renderMarkdown(comment.content)}</div>
+            ${isCommentAuthor && modStatus !== 'normal' ? `
+            <div class="mod-notice">
+                <span class="mod-notice-icon">⚠</span>
+                <span>This response has been reviewed by an instructor and is not visible to others.${comment.mod_note ? ' ' + esc(comment.mod_note) : ''}</span>
+            </div>` : ''}
+            <div class="comment-content">${renderMarkdown(comment.content || '')}</div>
             <div class="comment-actions">
                 <button class="comment-action-btn ${comment.vote === 1 ? 'upvoted' : ''}"
                         onclick="voteComment(${comment.id}, this)">
@@ -955,6 +1034,13 @@ function renderComment(comment, post, isQA = false) {
                         onclick="markAnswer(${comment.id}, this)">${comment.is_answer ? '✕ Unmark answer' : '✓ Mark as answer'}</button>` : ''}
                 ${isOwner || isInstructor ? `
                 <button class="comment-action-btn btn-danger" onclick="deleteComment(${comment.id})">Delete</button>` : ''}
+                ${isInstructor ? `
+                <button class="comment-action-btn" onclick="openModerateModal('comment',${comment.id},'${modStatus}')">🛡️ Moderate</button>` : ''}
+                ${!isInstructor ? `
+                <button class="flag-btn ${alreadyFlagged ? 'flagged' : ''}"
+                        ${alreadyFlagged ? 'disabled title="Already reported"' : `onclick="openFlagModal('comment',${comment.id})" title="Report this comment"`}>
+                    ⚑${alreadyFlagged ? ' Reported' : ''}
+                </button>` : ''}
             </div>
             ${(comment.replies || []).length ? `
             <div class="replies" id="replies-${comment.id}">
@@ -3029,6 +3115,225 @@ async function pollDocChanges() {
     } catch (_) {}
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// MODERATION
+// ═══════════════════════════════════════════════════════════════════
+
+function openFlagModal(type, id) {
+    const reasons = [
+        { value: 'inappropriate', label: 'Inappropriate content' },
+        { value: 'harassment',    label: 'Harassment or bullying' },
+        { value: 'spam',          label: 'Spam or off-topic advertising' },
+        { value: 'off_topic',     label: 'Off-topic / irrelevant' },
+    ];
+
+    openModal(`
+        <h2 class="modal-title" style="margin-bottom:1rem">Report Content</h2>
+        <p style="font-size:0.875rem;color:var(--text-secondary);margin-bottom:1.25rem">
+            Help keep the community respectful. Your report is anonymous to other students.
+        </p>
+        <div style="margin-bottom:1rem">
+            <label class="form-label">Reason <span style="color:var(--error)">*</span></label>
+            <select id="flag-reason" class="form-input">
+                <option value="">— Select a reason —</option>
+                ${reasons.map(r => `<option value="${r.value}">${r.label}</option>`).join('')}
+            </select>
+        </div>
+        <div style="margin-bottom:1.25rem">
+            <label class="form-label">Additional details <span style="color:var(--text-muted)">(optional)</span></label>
+            <textarea id="flag-details" class="form-input" rows="3"
+                      placeholder="Briefly describe what you found concerning…"></textarea>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:0.5rem">
+            <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitFlag('${type}',${id})">Submit Report</button>
+        </div>
+    `);
+}
+
+async function submitFlag(type, id) {
+    const reason  = document.getElementById('flag-reason')?.value;
+    const details = document.getElementById('flag-details')?.value || '';
+    if (!reason) { toast('Please select a reason.', 4000); return; }
+
+    try {
+        await api.post(`/api/${type}s/${id}/flag`, { reason, details });
+        state.flaggedItems.add(`${type}:${id}`);
+        closeModal();
+        toast('Report submitted. Instructors will review it shortly.');
+    } catch (e) {
+        if (e.message?.includes('already reported') || e.message?.includes('409')) {
+            closeModal();
+            toast("You've already reported this content.", 4000);
+        } else {
+            toast(e.message || 'Failed to submit report', 5000);
+        }
+    }
+}
+
+function openModerateModal(type, id, currentStatus) {
+    openModal(`
+        <h2 class="modal-title" style="margin-bottom:1rem">🛡️ Moderate Content</h2>
+        <p style="font-size:0.825rem;color:var(--text-secondary);margin-bottom:1rem">
+            Current status: <strong>${currentStatus}</strong>
+        </p>
+
+        <div style="margin-bottom:1rem">
+            <label class="form-label">Private note to author <span style="color:var(--text-muted)">(optional)</span></label>
+            <textarea id="mod-note" class="form-input" rows="2"
+                      placeholder="Explain the action to the author…"></textarea>
+        </div>
+
+        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:1.25rem">
+            <button class="btn btn-ghost btn-sm" onclick="performModAction('${type}',${id},'send_note')">
+                ✉ Send Note Only
+            </button>
+            ${currentStatus === 'normal' ? `
+            <button class="btn btn-ghost btn-sm" onclick="performModAction('${type}',${id},'hide')">
+                🙈 Hide
+            </button>
+            <button class="btn btn-ghost btn-sm btn-danger" onclick="performModAction('${type}',${id},'redact')">
+                ✂ Redact Content
+            </button>` : `
+            <button class="btn btn-ghost btn-sm" onclick="performModAction('${type}',${id},'restore')" style="color:var(--success)">
+                ↩ Restore
+            </button>`}
+        </div>
+        <div style="display:flex;justify-content:flex-end">
+            <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        </div>
+    `);
+}
+
+async function performModAction(type, id, action) {
+    const note = document.getElementById('mod-note')?.value || '';
+    try {
+        await api.post(`/api/${type}s/${id}/moderate`, { action, note });
+        closeModal();
+        toast(`Action "${action}" applied.`);
+        // Refresh current view
+        router.handle();
+    } catch (e) {
+        toast(e.message || 'Action failed', 5000);
+    }
+}
+
+// Moderation panel view (instructor only)
+views.moderation = async function() {
+    if (state.role !== 'instructor') { router.navigate('/'); return; }
+    state.view = 'moderation';
+    refreshSidebar();
+
+    const content = document.getElementById('view-content');
+    content.innerHTML = `
+        <div class="mod-panel">
+            <div class="mod-panel-header">
+                <h1 class="page-title">🛡️ Moderation</h1>
+                <button class="btn btn-ghost btn-sm" onclick="loadModerationAuditLog()">View Audit Log</button>
+            </div>
+            <div id="mod-flag-list">${loadingInline()}</div>
+        </div>`;
+
+    try {
+        const flags = await api.get('/api/flags');
+        const list  = document.getElementById('mod-flag-list');
+        if (!list) return;
+
+        if (!flags || flags.length === 0) {
+            list.innerHTML = `<div class="mod-empty">
+                <div class="mod-empty-icon">✅</div>
+                <div>No open flags — the community is looking good!</div>
+            </div>`;
+            return;
+        }
+
+        list.innerHTML = flags.map(f => {
+            const reasonTags = (f.reasons || []).map(r =>
+                `<span class="reason-tag">${esc(r.replace('_', ' '))}</span>`
+            ).join(' ');
+            const typeLabel = f.target_type === 'post' ? 'Post' : 'Comment';
+            const link = f.target_type === 'post' ? `/post/${f.target_id}` : '';
+
+            return `
+            <div class="mod-action-row">
+                <div class="mod-action-meta">
+                    <strong>${typeLabel}</strong> by ${esc(f.author_name)}
+                    · ${reasonTags}
+                    · <span class="flag-badge">⚑ ${f.flag_count} flag${f.flag_count !== 1 ? 's' : ''}</span>
+                    · ${timeAgo(f.latest_flag_at)}
+                    ${f.mod_status !== 'normal' ? `<span class="mod-status-badge ${f.mod_status}">${f.mod_status}</span>` : ''}
+                    ${link ? `<a href="#" onclick="event.preventDefault();router.navigate('${link}')" style="margin-left:auto;font-size:0.78rem">View →</a>` : ''}
+                </div>
+                <div class="mod-action-excerpt">${esc(f.content_excerpt)}${f.body_excerpt ? '\n' + esc(f.body_excerpt) : ''}</div>
+                <div class="mod-action-buttons">
+                    <button class="btn btn-ghost btn-sm" onclick="quickModAction('${f.target_type}',${f.target_id},'send_note')">✉ Send Note</button>
+                    ${f.mod_status === 'normal' ? `
+                    <button class="btn btn-ghost btn-sm" onclick="quickModAction('${f.target_type}',${f.target_id},'hide')">🙈 Hide</button>
+                    <button class="btn btn-ghost btn-sm btn-danger" onclick="quickModAction('${f.target_type}',${f.target_id},'redact')">✂ Redact</button>` : `
+                    <button class="btn btn-ghost btn-sm" onclick="quickModAction('${f.target_type}',${f.target_id},'restore')" style="color:var(--success)">↩ Restore</button>`}
+                    <button class="btn btn-ghost btn-sm" onclick="dismissFlags(${f.first_flag_id})">✕ Dismiss Flags</button>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        const list = document.getElementById('mod-flag-list');
+        if (list) list.innerHTML = `<div class="mod-empty">${esc(e.message)}</div>`;
+    }
+};
+
+async function quickModAction(type, id, action) {
+    let note = '';
+    if (action === 'send_note') {
+        note = prompt('Enter a private note to send to the author:') || '';
+        if (note === null) return; // cancelled
+    }
+    try {
+        await api.post(`/api/${type}s/${id}/moderate`, { action, note });
+        toast(`Action "${action}" applied.`);
+        views.moderation();
+    } catch (e) {
+        toast(e.message || 'Action failed', 5000);
+    }
+}
+
+async function dismissFlags(flagId) {
+    try {
+        await api.post(`/api/flags/${flagId}/resolve`, { action: 'dismiss' });
+        toast('Flags dismissed.');
+        views.moderation();
+    } catch (e) {
+        toast(e.message || 'Failed to dismiss', 5000);
+    }
+}
+
+async function loadModerationAuditLog() {
+    try {
+        const rows = await api.get('/api/moderation-log');
+        const body = rows.length === 0
+            ? '<div class="mod-empty"><div class="mod-empty-icon">📋</div><div>No moderation actions recorded yet.</div></div>'
+            : rows.map(r => `
+                <div class="mod-log-entry">
+                    <div>
+                        <span class="mod-log-action">${esc(r.action)}</span>
+                        by <strong>${esc(r.actor_name)}</strong>
+                        — <em>${esc(r.target_type)}</em>: ${esc(r.target_excerpt)}
+                    </div>
+                    <div class="mod-log-time">${timeAgo(r.created_at)}</div>
+                    ${r.note ? `<div class="mod-log-detail">"${esc(r.note)}"</div>` : ''}
+                </div>`).join('');
+
+        openModal(`
+            <h2 class="modal-title" style="margin-bottom:1rem">📋 Moderation Audit Log</h2>
+            <div style="max-height:60vh;overflow-y:auto">${body}</div>
+            <div style="margin-top:1rem;text-align:right">
+                <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+            </div>
+        `);
+    } catch (e) {
+        toast(e.message || 'Failed to load audit log', 5000);
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Make key functions global for inline handlers
@@ -3044,6 +3349,13 @@ window.removePollOption = removePollOption;
 window.submitNewBoard   = submitNewBoard;
 window.submitCard       = submitCard;
 window.openNewDocModal  = openNewDocModal;
+window.openFlagModal    = openFlagModal;
+window.submitFlag       = submitFlag;
+window.openModerateModal = openModerateModal;
+window.performModAction = performModAction;
+window.quickModAction   = quickModAction;
+window.dismissFlags     = dismissFlags;
+window.loadModerationAuditLog = loadModerationAuditLog;
 
 // ── Start ─────────────────────────────────────────────────────────
 init();

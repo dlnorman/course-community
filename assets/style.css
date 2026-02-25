@@ -1650,6 +1650,175 @@ hr { border: none; border-top: 1px solid var(--border); }
 
 /* ── End Documents ────────────────────────────────────────────────────────── */
 
+/* ── Moderation System ───────────────────────────────────────────────────── */
+
+/* Flag button — sits inline beside vote/react controls */
+.flag-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+}
+.flag-btn:hover { color: #C67400; background: #FFF3CD; }
+.flag-btn.flagged { color: #C67400; opacity: 0.7; cursor: default; }
+.flag-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Amber pill shown to instructors on flagged content */
+.flag-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: #FFF3CD;
+    color: #C67400;
+    border: 1px solid #FADA7A;
+    border-radius: 99px;
+    padding: 0.15rem 0.55rem;
+    margin-left: 0.4rem;
+    vertical-align: middle;
+}
+
+/* Status badge for hidden/redacted */
+.mod-status-badge {
+    font-size: 0.7rem;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 0.1rem 0.45rem;
+    margin-left: 0.35rem;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.mod-status-badge.hidden  { background: var(--error-tint); color: var(--error); }
+.mod-status-badge.redacted { background: #F3E8FF; color: #6B21A8; }
+
+/* Placeholder shown where hidden/redacted content would appear */
+.mod-placeholder {
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 0.875rem;
+    padding: 1rem 1.25rem;
+    text-align: center;
+}
+
+/* Amber notice bar shown only to the content author */
+.mod-notice {
+    background: #FFFBEB;
+    border: 1px solid #FADA7A;
+    border-radius: 8px;
+    color: #92400E;
+    font-size: 0.825rem;
+    padding: 0.65rem 1rem;
+    margin-bottom: 0.75rem;
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+}
+.mod-notice-icon { flex-shrink: 0; font-size: 1rem; }
+
+/* Instructor moderation panel */
+.mod-panel { }
+
+.mod-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.25rem;
+}
+
+.mod-action-row {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.125rem;
+    margin-bottom: 0.75rem;
+}
+.mod-action-row:last-child { margin-bottom: 0; }
+
+.mod-action-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.mod-action-excerpt {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    border-left: 3px solid var(--border);
+    padding-left: 0.75rem;
+    margin: 0.5rem 0 0.75rem;
+    font-style: italic;
+    white-space: pre-wrap;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+.mod-action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+}
+
+.reason-tag {
+    display: inline-block;
+    background: #FFF3CD;
+    color: #92400E;
+    border-radius: 99px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.1rem 0.5rem;
+    text-transform: capitalize;
+}
+
+/* Audit log */
+.mod-log-entry {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.25rem 1rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.825rem;
+}
+.mod-log-entry:last-child { border-bottom: none; }
+.mod-log-action {
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+}
+.mod-log-time { color: var(--text-muted); font-size: 0.75rem; white-space: nowrap; }
+.mod-log-detail { color: var(--text-secondary); grid-column: 1 / -1; }
+
+/* Empty state for flag queue */
+.mod-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 3rem 1rem;
+    font-size: 0.9rem;
+}
+.mod-empty-icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
+
+/* ── End Moderation ──────────────────────────────────────────────────────── */
+
 @media (max-width: 768px) {
     :root { --sidebar-w: 0px; }
     .app-layout { grid-template-columns: 1fr; }
