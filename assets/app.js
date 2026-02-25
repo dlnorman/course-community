@@ -153,6 +153,7 @@ async function loadNotifications() {
 
 function renderApp() {
     document.getElementById('app').innerHTML = `
+        <a href="#main-content" class="skip-link">Skip to main content</a>
         <div class="app-layout">
             ${renderTopbar()}
             ${renderSidebar()}
@@ -186,7 +187,7 @@ function renderTopbar() {
             <span class="topbar-course-name">${esc(c.title)}</span>
         </div>
         <div class="topbar-actions">
-            <button class="topbar-btn" id="notif-btn" aria-label="Notifications">
+            <button class="topbar-btn" id="notif-btn" aria-label="Notifications" aria-expanded="false" aria-haspopup="true">
                 🔔
                 ${state.unreadCount > 0 ? `<span class="notif-badge" id="notif-badge">${state.unreadCount}</span>` : '<span class="notif-badge" id="notif-badge" style="display:none"></span>'}
             </button>
@@ -204,12 +205,15 @@ function bindTopbar() {
 
 function updateNotifBadge() {
     const badge = document.getElementById('notif-badge');
+    const btn   = document.getElementById('notif-btn');
     if (!badge) return;
     if (state.unreadCount > 0) {
         badge.textContent = state.unreadCount;
         badge.style.display = '';
+        btn?.setAttribute('aria-label', `Notifications, ${state.unreadCount} unread`);
     } else {
         badge.style.display = 'none';
+        btn?.setAttribute('aria-label', 'Notifications');
     }
 }
 
@@ -218,43 +222,49 @@ function updateNotifBadge() {
 function renderSidebar() {
     const spaceItems = state.spaces.map(s => `
         <div class="sidebar-item ${state.currentSpaceId === s.id ? 'active' : ''}"
-             data-nav="/space/${s.id}" data-space-id="${s.id}">
-            <span class="sidebar-icon">${s.icon}</span>
+             data-nav="/space/${s.id}" data-space-id="${s.id}"
+             tabindex="0" role="button" ${state.currentSpaceId === s.id ? 'aria-current="page"' : ''}>
+            <span class="sidebar-icon" aria-hidden="true">${s.icon}</span>
             <span>${esc(s.name)}</span>
         </div>
     `).join('');
 
     return `
-    <nav class="sidebar">
+    <nav class="sidebar" aria-label="Main navigation">
         <div class="sidebar-section">
-            <div class="sidebar-item ${state.view === 'feed' ? 'active' : ''}" data-nav="/">
-                <span class="sidebar-icon">📣</span>
+            <div class="sidebar-item ${state.view === 'feed' ? 'active' : ''}" data-nav="/"
+                 tabindex="0" role="button" ${state.view === 'feed' ? 'aria-current="page"' : ''}>
+                <span class="sidebar-icon" aria-hidden="true">📣</span>
                 <span>Community Feed</span>
             </div>
         </div>
 
         <div class="sidebar-divider"></div>
         <div class="sidebar-section">
-            <div class="sidebar-section-label">Spaces</div>
+            <div class="sidebar-section-label" aria-hidden="true">Spaces</div>
             ${spaceItems}
         </div>
 
         <div class="sidebar-divider"></div>
         <div class="sidebar-section">
-            <div class="sidebar-item ${state.view === 'boards' ? 'active' : ''}" data-nav="/boards">
-                <span class="sidebar-icon">🧩</span>
+            <div class="sidebar-item ${state.view === 'boards' ? 'active' : ''}" data-nav="/boards"
+                 tabindex="0" role="button" ${state.view === 'boards' ? 'aria-current="page"' : ''}>
+                <span class="sidebar-icon" aria-hidden="true">🧩</span>
                 <span>Collaboration Boards</span>
             </div>
-            <div class="sidebar-item ${'docs|doc'.includes(state.view) ? 'active' : ''}" data-nav="/docs">
-                <span class="sidebar-icon">📄</span>
+            <div class="sidebar-item ${'docs|doc'.includes(state.view) ? 'active' : ''}" data-nav="/docs"
+                 tabindex="0" role="button" ${('docs|doc'.includes(state.view)) ? 'aria-current="page"' : ''}>
+                <span class="sidebar-icon" aria-hidden="true">📄</span>
                 <span>Documents</span>
             </div>
-            <div class="sidebar-item ${'feedback|feedbackDetail|feedbackReview'.includes(state.view) ? 'active' : ''}" data-nav="/feedback">
-                <span class="sidebar-icon">🔁</span>
+            <div class="sidebar-item ${'feedback|feedbackDetail|feedbackReview'.includes(state.view) ? 'active' : ''}" data-nav="/feedback"
+                 tabindex="0" role="button" ${('feedback|feedbackDetail|feedbackReview'.includes(state.view)) ? 'aria-current="page"' : ''}>
+                <span class="sidebar-icon" aria-hidden="true">🔁</span>
                 <span>Peer Feedback</span>
             </div>
-            <div class="sidebar-item ${state.view === 'members' ? 'active' : ''}" data-nav="/members">
-                <span class="sidebar-icon">👥</span>
+            <div class="sidebar-item ${state.view === 'members' ? 'active' : ''}" data-nav="/members"
+                 tabindex="0" role="button" ${state.view === 'members' ? 'aria-current="page"' : ''}>
+                <span class="sidebar-icon" aria-hidden="true">👥</span>
                 <span>Members</span>
             </div>
         </div>
@@ -263,8 +273,9 @@ function renderSidebar() {
         <div class="sidebar-divider"></div>
         <div class="sidebar-section">
             <div class="sidebar-section-label">Instructor</div>
-            <div class="sidebar-item ${state.view === 'analytics' ? 'active' : ''}" data-nav="/analytics">
-                <span class="sidebar-icon">📊</span>
+            <div class="sidebar-item ${state.view === 'analytics' ? 'active' : ''}" data-nav="/analytics"
+                 tabindex="0" role="button" ${state.view === 'analytics' ? 'aria-current="page"' : ''}>
+                <span class="sidebar-icon" aria-hidden="true">📊</span>
                 <span>Community Pulse</span>
             </div>
         </div>` : ''}
@@ -275,10 +286,14 @@ function bindSidebar() {
     document.querySelector('.sidebar')?.addEventListener('click', e => {
         const item = e.target.closest('[data-nav]');
         if (item) {
-            const path = item.dataset.nav;
-            router.navigate(path);
-            // Update active state
+            router.navigate(item.dataset.nav);
             refreshSidebar();
+        }
+    });
+    document.querySelector('.sidebar')?.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            const item = e.target.closest('[data-nav]');
+            if (item) { e.preventDefault(); item.click(); }
         }
     });
 }
@@ -288,13 +303,20 @@ function refreshSidebar() {
     if (!sidebar) return;
     sidebar.querySelectorAll('.sidebar-item').forEach(item => {
         item.classList.remove('active');
+        item.removeAttribute('aria-current');
         const nav = item.dataset.nav;
-        if (nav === '/' && state.view === 'feed') item.classList.add('active');
-        if (nav === '/boards' && state.view === 'boards') item.classList.add('active');
-        if (nav === '/docs' && (state.view === 'docs' || state.view === 'doc')) item.classList.add('active');
-        if (nav === '/members' && state.view === 'members') item.classList.add('active');
-        if (nav === '/analytics' && state.view === 'analytics') item.classList.add('active');
-        if (item.dataset.spaceId && +item.dataset.spaceId === state.currentSpaceId) item.classList.add('active');
+        let active = false;
+        if (nav === '/' && state.view === 'feed') active = true;
+        if (nav === '/boards' && state.view === 'boards') active = true;
+        if (nav === '/docs' && (state.view === 'docs' || state.view === 'doc')) active = true;
+        if (nav === '/members' && state.view === 'members') active = true;
+        if (nav === '/analytics' && state.view === 'analytics') active = true;
+        if (nav === '/feedback' && 'feedback|feedbackDetail|feedbackReview'.includes(state.view)) active = true;
+        if (item.dataset.spaceId && +item.dataset.spaceId === state.currentSpaceId) active = true;
+        if (active) {
+            item.classList.add('active');
+            item.setAttribute('aria-current', 'page');
+        }
     });
 }
 
@@ -304,13 +326,14 @@ function renderRightPanel() {
     const instructors = state.members.filter(m => m.role === 'instructor').slice(0, 3);
     const recent = state.members.filter(m => m.last_seen).slice(0, 6);
     return `
-    <aside class="panel">
+    <aside class="panel" aria-label="Course information">
         ${instructors.length ? `
         <div class="panel-card">
             <div class="panel-card-header">Instructors</div>
             <div class="panel-card-body">
                 ${instructors.map(m => `
-                <div class="panel-member" style="cursor:pointer" data-nav="/profile/${m.id}">
+                <div class="panel-member" style="cursor:pointer" data-nav="/profile/${m.id}"
+                     tabindex="0" role="button" aria-label="View profile of ${esc(m.given_name || m.name)}">
                     <div class="panel-member-avatar">${avatarEl(m, 28)}</div>
                     <div>
                         <div class="panel-member-name">${esc(m.given_name || m.name)}</div>
@@ -324,13 +347,14 @@ function renderRightPanel() {
             <div class="panel-card-header">Recently Active</div>
             <div class="panel-card-body">
                 ${recent.length ? recent.map(m => `
-                <div class="panel-member" style="cursor:pointer" data-nav="/profile/${m.id}">
+                <div class="panel-member" style="cursor:pointer" data-nav="/profile/${m.id}"
+                     tabindex="0" role="button" aria-label="View profile of ${esc(m.given_name || m.name)}">
                     <div class="panel-member-avatar">${avatarEl(m, 28)}</div>
                     <div>
                         <div class="panel-member-name">${esc(m.given_name || m.name)}</div>
                         <div class="panel-member-role">${timeAgo(m.last_seen)}</div>
                     </div>
-                    <div class="online-dot" style="background:${m.last_seen > Date.now()/1000 - 300 ? 'var(--success)' : 'var(--border-dark)'}"></div>
+                    <div class="online-dot" aria-hidden="true" style="background:${m.last_seen > Date.now()/1000 - 300 ? 'var(--success)' : 'var(--border-dark)'}"></div>
                 </div>`).join('') : '<div style="font-size:0.8rem;color:var(--text-muted);text-align:center;padding:0.5rem">No activity yet</div>'}
             </div>
         </div>
@@ -472,6 +496,7 @@ const views = {
         state.view = 'doc';
         state.currentSpaceId = null;
         refreshSidebar();
+        document.getElementById('main-content').classList.add('in-doc-editor');
         setView(loadingInline());
         try {
             const doc = await api.get(`/api/docs/${docId}`);
@@ -605,9 +630,9 @@ function renderFeedView(posts, meta) {
         <button class="btn btn-primary" onclick="openCompose()">+ New Post</button>
     </div>
 
-    <div class="tabs" id="sort-tabs">
-        <button class="tab active" data-sort="recent">Recent</button>
-        <button class="tab" data-sort="top">Top Voted</button>
+    <div class="tabs" id="sort-tabs" role="tablist" aria-label="Sort posts">
+        <button class="tab active" data-sort="recent" role="tab" aria-selected="true">Recent</button>
+        <button class="tab" data-sort="top" role="tab" aria-selected="false">Top Voted</button>
     </div>
 
     ${renderComposeBubble()}
@@ -631,14 +656,14 @@ function renderSpaceView(space, posts, meta) {
     </div>
 
     ${space.type === 'qa' ? `
-    <div class="tabs" id="sort-tabs">
-        <button class="tab active" data-sort="recent">Recent</button>
-        <button class="tab" data-sort="top">Most Helpful</button>
-        <button class="tab" data-sort="unanswered">Unanswered</button>
+    <div class="tabs" id="sort-tabs" role="tablist" aria-label="Sort posts">
+        <button class="tab active" data-sort="recent" role="tab" aria-selected="true">Recent</button>
+        <button class="tab" data-sort="top" role="tab" aria-selected="false">Most Helpful</button>
+        <button class="tab" data-sort="unanswered" role="tab" aria-selected="false">Unanswered</button>
     </div>` : `
-    <div class="tabs" id="sort-tabs">
-        <button class="tab active" data-sort="recent">Recent</button>
-        <button class="tab" data-sort="top">Top</button>
+    <div class="tabs" id="sort-tabs" role="tablist" aria-label="Sort posts">
+        <button class="tab active" data-sort="recent" role="tab" aria-selected="true">Recent</button>
+        <button class="tab" data-sort="top" role="tab" aria-selected="false">Top</button>
     </div>`}
 
     ${renderComposeBubble()}
@@ -649,15 +674,24 @@ function renderSpaceView(space, posts, meta) {
 
 function renderComposeBubble() {
     return `
-    <div class="compose-bar" onclick="openCompose()">
-        <div class="compose-avatar">${avatarEl(state.user, 36)}</div>
-        <div class="compose-placeholder">Share something with the community…</div>
+    <button class="compose-bar" onclick="openCompose()" aria-label="Create a new post">
+        <div class="compose-avatar" aria-hidden="true">${avatarEl(state.user, 36)}</div>
+        <div class="compose-placeholder" aria-hidden="true">Share something with the community…</div>
         <div class="compose-types">
-            <span class="compose-type-btn" onclick="event.stopPropagation();openCompose('question')">❓</span>
-            <span class="compose-type-btn" onclick="event.stopPropagation();openCompose('resource')">📚</span>
-            <span class="compose-type-btn" onclick="event.stopPropagation();openCompose('poll')">📊</span>
+            <span class="compose-type-btn" role="button" tabindex="0"
+                  onclick="event.stopPropagation();openCompose('question')"
+                  onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openCompose('question')}"
+                  aria-label="New question"><span aria-hidden="true">❓</span></span>
+            <span class="compose-type-btn" role="button" tabindex="0"
+                  onclick="event.stopPropagation();openCompose('resource')"
+                  onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openCompose('resource')}"
+                  aria-label="New resource"><span aria-hidden="true">📚</span></span>
+            <span class="compose-type-btn" role="button" tabindex="0"
+                  onclick="event.stopPropagation();openCompose('poll')"
+                  onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openCompose('poll')}"
+                  aria-label="New poll"><span aria-hidden="true">📊</span></span>
         </div>
-    </div>`;
+    </button>`;
 }
 
 function renderPostCards(posts, showSpaceBadge = true) {
@@ -709,7 +743,10 @@ function renderPostCard(post, showSpaceBadge, delay = 0) {
     <article class="post-card type-${post.type} ${post.is_pinned ? 'pinned' : ''} ${post.is_featured ? 'featured' : ''} ${post.is_resolved ? 'resolved' : ''}"
              data-post-id="${post.id}"
              style="animation-delay:${delay * 50}ms"
-             onclick="router.navigate('/post/${post.id}')">
+             tabindex="0"
+             aria-label="${esc(post.title || 'Post')} — ${typeLabel}"
+             onclick="router.navigate('/post/${post.id}')"
+             onkeydown="if(event.key==='Enter')router.navigate('/post/${post.id}')">
         <div class="post-card-header">
             <span class="post-type-badge type-${post.type}">${typeLabel}</span>
             ${showSpaceBadge && post.space_name ? `
@@ -966,7 +1003,10 @@ function renderBoardsList(boards) {
         <p class="empty-state-text">Create a board to start collaborative thinking.</p>
     </div>` : `<div class="board-list">
         ${boards.map(b => `
-        <div class="board-list-card" onclick="router.navigate('/board/${b.id}')">
+        <div class="board-list-card" tabindex="0" role="button"
+             onclick="router.navigate('/board/${b.id}')"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();router.navigate('/board/${b.id}')}"
+             aria-label="${esc(b.title)}">
             <div class="board-list-title">${esc(b.title)}</div>
             ${b.description ? `<div class="board-list-desc">${esc(b.description)}</div>` : ''}
             <div class="board-list-meta">
@@ -1101,7 +1141,10 @@ function renderMembersView(members) {
 
 function renderMemberCard(member) {
     return `
-    <div class="member-card" onclick="views.profile(${member.id})">
+    <div class="member-card" tabindex="0" role="button"
+         onclick="views.profile(${member.id})"
+         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();views.profile(${member.id})}"
+         aria-label="View profile of ${esc(member.name)}">
         ${member.role === 'instructor' ? '<div class="instructor-badge">Instructor</div>' : ''}
         <div class="member-avatar">${avatarEl(member, 56)}</div>
         <div class="member-name">${esc(member.name)}</div>
@@ -1543,8 +1586,12 @@ function bindFeedEvents() {
     document.getElementById('sort-tabs')?.addEventListener('click', async e => {
         const tab = e.target.closest('.tab');
         if (!tab) return;
-        document.querySelectorAll('#sort-tabs .tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('#sort-tabs .tab').forEach(t => {
+            t.classList.remove('active');
+            t.setAttribute('aria-selected', 'false');
+        });
         tab.classList.add('active');
+        tab.setAttribute('aria-selected', 'true');
         const sort = tab.dataset.sort;
         const spaceParam = state.currentSpaceId ? `&space_id=${state.currentSpaceId}` : '';
         const data = await api.get(`/api/posts?sort=${sort}${spaceParam}`);
@@ -1767,6 +1814,7 @@ window.castPollVote = async (postId, optionIdx, container) => {
 
 function toggleNotifPanel() {
     state.notifOpen = !state.notifOpen;
+    document.getElementById('notif-btn')?.setAttribute('aria-expanded', state.notifOpen ? 'true' : 'false');
     const host = document.getElementById('notif-host');
     if (!state.notifOpen) {
         host.innerHTML = '';
@@ -1774,14 +1822,15 @@ function toggleNotifPanel() {
     }
 
     host.innerHTML = `
-    <div class="notif-panel">
+    <div class="notif-panel" role="dialog" aria-label="Notifications" aria-live="polite">
         <div class="notif-panel-header">
             <strong>Notifications</strong>
             <button class="btn btn-ghost btn-sm" onclick="markNotifsRead()">Mark all read</button>
         </div>
         ${state.notifications.length ? state.notifications.map(n => `
-        <div class="notif-item ${n.is_read ? '' : 'unread'}" onclick="${n.link ? `closeNotifPanel();router.navigate('${n.link}')` : 'void 0'}">
-            <div class="notif-dot" style="${n.is_read ? 'opacity:0' : ''}"></div>
+        <div class="notif-item ${n.is_read ? '' : 'unread'}"
+             ${n.link ? `onclick="closeNotifPanel();router.navigate('${n.link}')" tabindex="0" role="button" aria-label="${esc(n.message)}"` : ''}>
+            <div class="notif-dot" aria-hidden="true" style="${n.is_read ? 'opacity:0' : ''}"></div>
             <div>
                 <div class="notif-text">${esc(n.message)}</div>
                 <div class="notif-time">${timeAgo(n.created_at)}</div>
@@ -1822,18 +1871,35 @@ window.markNotifsRead = async () => {
 // MODAL
 // ═══════════════════════════════════════════════════════════════════
 
+let _modalTrigger = null;
+
 function openModal(html, large = false) {
+    _modalTrigger = document.activeElement;
     const host = document.getElementById('modal-host');
     host.innerHTML = `
     <div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
-        <div class="modal" style="${large ? 'max-width:720px' : ''}">
+        <div class="modal" role="dialog" aria-modal="true" style="${large ? 'max-width:720px' : ''}">
             ${html}
         </div>
     </div>`;
+    // Focus first interactive element in modal
+    requestAnimationFrame(() => {
+        const modal = document.querySelector('#modal-overlay .modal');
+        const first = modal?.querySelector('input, button, textarea, select, [tabindex="0"]');
+        (first || modal)?.focus();
+    });
+    document.addEventListener('keydown', _modalEscHandler);
+}
+
+function _modalEscHandler(e) {
+    if (e.key === 'Escape') closeModal();
 }
 
 window.closeModal = () => {
+    document.removeEventListener('keydown', _modalEscHandler);
     document.getElementById('modal-host').innerHTML = '';
+    _modalTrigger?.focus();
+    _modalTrigger = null;
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1841,16 +1907,30 @@ window.closeModal = () => {
 // ═══════════════════════════════════════════════════════════════════
 
 function setView(html) {
-    document.getElementById('view-content').innerHTML = html;
+    const container = document.getElementById('view-content');
+    container.innerHTML = html;
+    // Move focus to the page heading for screen reader navigation
+    const h1 = container.querySelector('h1');
+    if (h1) {
+        h1.setAttribute('tabindex', '-1');
+        h1.focus({ preventScroll: true });
+        document.title = `${h1.textContent.trim()} — Course Community`;
+    }
 }
 
 function updatePanel() {
     const panel = document.querySelector('.panel');
     if (panel) panel.outerHTML = renderRightPanel();
-    // Re-bind panel nav links
-    document.querySelector('.panel')?.addEventListener('click', e => {
+    const newPanel = document.querySelector('.panel');
+    newPanel?.addEventListener('click', e => {
         const nav = e.target.closest('[data-nav]');
         if (nav) router.navigate(nav.dataset.nav);
+    });
+    newPanel?.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            const nav = e.target.closest('[data-nav]');
+            if (nav) { e.preventDefault(); nav.click(); }
+        }
     });
 }
 
@@ -1921,7 +2001,7 @@ function spaceTypeInfo(type) {
 }
 
 function loadingInline() {
-    return `<div class="loading-inline"><div class="spinner"></div> Loading…</div>`;
+    return `<div class="loading-inline" role="status" aria-label="Loading"><div class="spinner" aria-hidden="true"></div> Loading…</div>`;
 }
 
 function errorState(msg) {
@@ -1945,6 +2025,9 @@ function toast(msg, duration = 3000) {
     const el = document.createElement('div');
     el.className = 'toast';
     el.textContent = msg;
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    el.setAttribute('aria-atomic', 'true');
     document.body.appendChild(el);
     setTimeout(() => el.remove(), duration);
 }
@@ -1969,7 +2052,10 @@ function renderFeedbackList(assignments) {
         : '';
 
     const cards = assignments.length ? assignments.map(a => `
-    <div class="pf-card" data-id="${a.id}" style="cursor:pointer" onclick="router.navigate('/feedback/${a.id}')">
+    <div class="pf-card" data-id="${a.id}" style="cursor:pointer" tabindex="0" role="button"
+         onclick="router.navigate('/feedback/${a.id}')"
+         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();router.navigate('/feedback/${a.id}')}"
+         aria-label="${esc(a.title)}">
         <div class="pf-card-header">
             <div class="pf-card-title-row">
                 <h3 class="pf-card-title">${esc(a.title)}</h3>
@@ -2528,10 +2614,13 @@ function renderDocsList(docs) {
            </div>`
         : `<div class="doc-list">
                ${docs.map(d => `
-               <div class="doc-list-card" onclick="router.navigate('/doc/${d.id}')">
+               <div class="doc-list-card" tabindex="0" role="button"
+                    onclick="router.navigate('/doc/${d.id}')"
+                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();router.navigate('/doc/${d.id}')}"
+                    aria-label="${esc(d.title)}, ${DOC_ACCESS_LABELS[parseInt(d.access_level)||0]}">
                    <div class="doc-list-header">
                        <div class="doc-list-title">${esc(d.title)}</div>
-                       ${d.is_public ? `<span class="doc-badge-public">Published</span>` : ''}
+                       ${docAccessBadge(d.access_level)}
                    </div>
                    <div class="doc-list-meta">
                        <span>by ${esc(d.creator_name)}</span>
@@ -2572,6 +2661,15 @@ function openNewDocModal() {
     });
 }
 
+// Access level labels and badge classes (0=private, 1=course view, 2=course edit, 3=public view)
+const DOC_ACCESS_LABELS  = ['Private', 'Course — view', 'Course — collaborative', 'Public'];
+const DOC_ACCESS_CLASSES = ['doc-badge-private', 'doc-badge-course-view', 'doc-badge-collab', 'doc-badge-public'];
+
+function docAccessBadge(accessLevel) {
+    const lvl = parseInt(accessLevel) || 0;
+    return `<span class="${DOC_ACCESS_CLASSES[lvl]}">${DOC_ACCESS_LABELS[lvl]}</span>`;
+}
+
 // Active document state for the editor
 const docEditorState = {
     id:          null,
@@ -2581,13 +2679,22 @@ const docEditorState = {
     mde:         null,
     dirty:       false,
     saving:      false,
-    isPublic:    false,
+    accessLevel: 0,
     createdBy:   null,
 };
 
 function renderDocEditor(doc) {
-    const canEdit = !doc.is_public || doc.created_by === state.user?.id || state.role === 'instructor';
+    const lvl     = parseInt(doc.access_level) || 0;
     const isOwner = doc.created_by === state.user?.id || state.role === 'instructor';
+    // Collaborative (lvl 2) = any course member can edit; otherwise owner only
+    const canEdit = isOwner || lvl === 2;
+
+    const _pubUrl = `${window.APP_CONFIG?.baseUrl ?? ''}/doc/${doc.id}`;
+    const readonlyNotice = !canEdit ? {
+        0: '🔒 This document is private.',
+        1: '📖 This document is viewable by course members — read only.',
+        3: `🌐 This document is publicly viewable — read only. Share it: <a href="${_pubUrl}" target="_blank" rel="noopener">${_pubUrl}</a>`,
+    }[lvl] ?? '' : (lvl === 3 ? `🌐 Public — anyone with the link can view this document: <a href="${_pubUrl}" target="_blank" rel="noopener">${_pubUrl}</a>` : '');
 
     return `
     <div class="doc-editor-page">
@@ -2603,9 +2710,14 @@ function renderDocEditor(doc) {
                    class="btn btn-secondary btn-sm"
                    download="${esc(doc.title)}.md">⬇ Download</a>
                 ${isOwner ? `
-                <button class="btn btn-sm ${doc.is_public ? 'btn-secondary' : 'btn-ghost'}" id="doc-publish-btn">
-                    ${doc.is_public ? '🔒 Unpublish' : '🌐 Publish'}
-                </button>
+                <select id="doc-access-select" class="doc-access-select" title="Document visibility"
+                        aria-label="Document visibility">
+                    <option value="0" ${lvl === 0 ? 'selected' : ''}>🔒 Private</option>
+                    <option value="1" ${lvl === 1 ? 'selected' : ''}>👥 Course — view only</option>
+                    <option value="2" ${lvl === 2 ? 'selected' : ''}>✏️ Course — collaborative</option>
+                    <option value="3" ${lvl === 3 ? 'selected' : ''}>🌐 Public — view only</option>
+                </select>
+                ${lvl === 3 ? `<button class="btn btn-ghost btn-sm" id="doc-copy-link-btn" title="Copy public link">🔗 Copy link</button>` : ''}
                 <button class="btn btn-danger-ghost btn-sm" id="doc-delete-btn">Delete</button>
                 ` : ''}
             </div>
@@ -2616,10 +2728,9 @@ function renderDocEditor(doc) {
                    value="${esc(doc.title)}" maxlength="200"
                    placeholder="Document title"
                    ${canEdit ? '' : 'readonly'}>
-            ${doc.is_public ? `<span class="doc-badge-public">Published — read only for others</span>` : ''}
         </div>
 
-        ${!canEdit ? `<div class="doc-readonly-notice">📖 This document is published. Only the creator or an instructor can edit it.</div>` : ''}
+        ${readonlyNotice ? `<div class="doc-readonly-notice">${readonlyNotice}</div>` : ''}
 
         <div class="doc-content-area" id="doc-content-area">
             <textarea id="doc-mde-textarea" ${canEdit ? '' : 'readonly'}>${esc(doc.content)}</textarea>
@@ -2650,16 +2761,17 @@ async function loadEasyMDE() {
 
 function bindDocEditorEvents(doc) {
     // Store active doc state
-    docEditorState.id        = doc.id;
-    docEditorState.version   = doc.version;
-    docEditorState.isPublic  = !!doc.is_public;
-    docEditorState.createdBy = doc.created_by;
-    docEditorState.dirty     = false;
-    docEditorState.saving    = false;
+    docEditorState.id          = doc.id;
+    docEditorState.version     = doc.version;
+    docEditorState.accessLevel = parseInt(doc.access_level) || 0;
+    docEditorState.createdBy   = doc.created_by;
+    docEditorState.dirty       = false;
+    docEditorState.saving      = false;
     clearInterval(docEditorState.pollTimer);
     clearTimeout(docEditorState.saveTimer);
 
-    const canEdit = !doc.is_public || doc.created_by === state.user?.id || state.role === 'instructor';
+    const isOwner = doc.created_by === state.user?.id || state.role === 'instructor';
+    const canEdit = isOwner || docEditorState.accessLevel === 2;
 
     // Initialize EasyMDE
     loadEasyMDE().then(EasyMDE => {
@@ -2682,10 +2794,12 @@ function bindDocEditorEvents(doc) {
         docEditorState.mde = mde;
 
         // Floating "Exit" button for fullscreen and split-view modes.
-        // EasyMDE adds 'fullscreen' to .EasyMDEContainer (not .CodeMirror).
-        // toggleFullScreen/toggleSideBySide are static methods: EasyMDE.toggleX(instance).
+        // EasyMDE uses CodeMirror's fullscreen addon, which adds class
+        // 'CodeMirror-fullscreen' (hyphenated) to the .CodeMirror wrapper div.
+        // Side-by-side adds 'editor-preview-active-side' to the preview div and
+        // may also silently activate fullscreen, so the exit handler unwinds both.
         const exitObserver = new MutationObserver(() => {
-            const isFull  = !!document.querySelector('.EasyMDEContainer.fullscreen');
+            const isFull  = !!document.querySelector('.CodeMirror-fullscreen');
             const isSplit = !!document.querySelector('.editor-preview-active-side');
             let btn = document.getElementById('mde-exit-btn');
             if (isFull || isSplit) {
@@ -2696,10 +2810,13 @@ function bindDocEditorEvents(doc) {
                     btn.innerHTML = '✕ Exit';
                     btn.title = 'Exit fullscreen / split view (or press Esc)';
                     btn.addEventListener('click', () => {
-                        if (document.querySelector('.EasyMDEContainer.fullscreen')) {
-                            EasyMDE.toggleFullScreen(mde);
-                        } else if (document.querySelector('.editor-preview-active-side')) {
+                        // Exit side-by-side first (it may have also entered fullscreen).
+                        if (document.querySelector('.editor-preview-active-side')) {
                             EasyMDE.toggleSideBySide(mde);
+                        }
+                        // Exit fullscreen using CodeMirror's own state as the truth.
+                        if (mde.codemirror.getOption('fullScreen')) {
+                            EasyMDE.toggleFullScreen(mde);
                         }
                     });
                     document.body.appendChild(btn);
@@ -2746,19 +2863,52 @@ function bindDocEditorEvents(doc) {
         }
     });
 
-    // Publish toggle
-    document.getElementById('doc-publish-btn')?.addEventListener('click', async () => {
+    // Access level selector
+    document.getElementById('doc-access-select')?.addEventListener('change', async (e) => {
+        const level = parseInt(e.target.value);
         try {
-            const res = await api.put(`/api/docs/${doc.id}/public`, {});
-            docEditorState.isPublic = !!res.is_public;
-            const btn = document.getElementById('doc-publish-btn');
-            if (btn) {
-                btn.textContent = res.is_public ? '🔒 Unpublish' : '🌐 Publish';
-                btn.className = `btn btn-sm ${res.is_public ? 'btn-secondary' : 'btn-ghost'}`;
+            const res = await api.put(`/api/docs/${doc.id}/access`, { access_level: level });
+            docEditorState.accessLevel = res.access_level;
+            const msgs = [
+                'Document set to private — only you can see it.',
+                'Course members can now view this document.',
+                'Course members can now collaboratively edit this document.',
+                'Document is now publicly viewable by anyone.',
+            ];
+            toast(msgs[res.access_level] ?? 'Access updated.');
+            // Show/hide copy-link button based on new level
+            const actions = e.target.closest('.doc-editor-actions');
+            if (actions) {
+                const existing = document.getElementById('doc-copy-link-btn');
+                if (res.access_level === 3 && !existing) {
+                    const btn = document.createElement('button');
+                    btn.id = 'doc-copy-link-btn';
+                    btn.className = 'btn btn-ghost btn-sm';
+                    btn.title = 'Copy public link';
+                    btn.textContent = '🔗 Copy link';
+                    btn.addEventListener('click', copyDocPublicLink);
+                    e.target.insertAdjacentElement('afterend', btn);
+                } else if (res.access_level !== 3 && existing) {
+                    existing.remove();
+                }
             }
-            toast(res.is_public ? 'Document published — others can now read it.' : 'Document unpublished.');
-        } catch (e) { toast(e.message); }
+        } catch (err) {
+            e.target.value = docEditorState.accessLevel;
+            toast(err.message);
+        }
     });
+
+    // Copy public share link
+    function copyDocPublicLink() {
+        const url = `${window.APP_CONFIG?.baseUrl ?? ''}/doc/${doc.id}`;
+        navigator.clipboard.writeText(url).then(() => {
+            toast('Public link copied to clipboard.');
+        }).catch(() => {
+            // Fallback for older browsers
+            prompt('Copy this link:', url);
+        });
+    }
+    document.getElementById('doc-copy-link-btn')?.addEventListener('click', copyDocPublicLink);
 
     // Delete
     document.getElementById('doc-delete-btn')?.addEventListener('click', async () => {
@@ -2771,6 +2921,7 @@ function bindDocEditorEvents(doc) {
 
     // Clean up timers and observers when navigating away
     window._docCleanup = () => {
+        document.getElementById('main-content')?.classList.remove('in-doc-editor');
         clearTimeout(docEditorState.saveTimer);
         clearInterval(docEditorState.pollTimer);
         docEditorState._exitObserver?.disconnect();

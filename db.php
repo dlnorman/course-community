@@ -233,7 +233,7 @@ function initSchema(PDO $db): void {
             course_id     INTEGER NOT NULL,
             title         TEXT    NOT NULL DEFAULT 'Untitled Document',
             content       TEXT    NOT NULL DEFAULT '',
-            is_public     INTEGER NOT NULL DEFAULT 0,
+            access_level  INTEGER NOT NULL DEFAULT 0,
             version       INTEGER NOT NULL DEFAULT 1,
             created_by    INTEGER NOT NULL,
             editing_uid   INTEGER,
@@ -361,6 +361,17 @@ function migrateSchema(PDO $db): void {
     // Ensure updated index exists (DROP + CREATE is safe with IF NOT EXISTS / IF EXISTS)
     $db->exec('DROP INDEX IF EXISTS idx_notifs_user');
     $db->exec('CREATE INDEX IF NOT EXISTS idx_notifs_user ON notifications(user_id, course_id, is_read)');
+
+    // ── Migration: documents.is_public → access_level (0-3) ────────────────────
+    $docCols = array_column(
+        $db->query('PRAGMA table_info(documents)')->fetchAll(PDO::FETCH_ASSOC),
+        'name'
+    );
+    if (in_array('is_public', $docCols) && !in_array('access_level', $docCols)) {
+        $db->exec('ALTER TABLE documents ADD COLUMN access_level INTEGER NOT NULL DEFAULT 0');
+        // Migrate: old is_public=1 maps to level 3 (publicly viewable)
+        $db->exec('UPDATE documents SET access_level = CASE WHEN is_public = 1 THEN 3 ELSE 0 END');
+    }
 
     // ── Migration: fix unixepoch() defaults → strftime('%s','now') ──────────────
     // Needed when the DB was first created with an old db.php on SQLite < 3.38.0.

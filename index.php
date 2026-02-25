@@ -36,6 +36,26 @@ if ($sid) {
     $authed  = (bool)$session;
 }
 
+// ── Public document viewer ────────────────────────────────────────────────────
+// Serve /doc/{id} to unauthenticated users if the document is publicly visible.
+// Authenticated users fall through to the SPA (which handles the /doc/:id route).
+if (!$authed && preg_match('#^/doc/(\d+)$#', $_relUri, $_docMatch)) {
+    $_pubDoc = dbOne(
+        'SELECT d.id, d.title, d.content, d.access_level, d.updated_at,
+                u.name AS creator_name, c.title AS course_title
+         FROM documents d
+         JOIN users u ON u.id = d.created_by
+         JOIN courses c ON c.id = d.course_id
+         WHERE d.id = ? AND d.access_level = 3',
+        [(int)$_docMatch[1]]
+    );
+    if ($_pubDoc) {
+        include __DIR__ . '/doc-public.php';
+        exit;
+    }
+    // Not a public doc — fall through to landing
+}
+
 if (!$authed) {
     if (DEV_MODE) {
         header('Location: ' . APP_URL . '/lti.php?action=dev');

@@ -41,6 +41,24 @@ function requireInstructor(array $session): void {
     if ($session['role'] !== 'instructor') jsonError(403, 'Instructor role required');
 }
 
+function optionalAuth(): ?array {
+    $sid = $_COOKIE['cc_session'] ?? '';
+    if (!$sid) return null;
+    $session = dbOne(
+        'SELECT s.*, u.id AS uid, u.name, u.given_name, u.family_name, u.email, u.picture, u.bio,
+                c.id AS cid, c.context_id, c.title AS course_title, c.label AS course_label
+         FROM sessions s
+         JOIN users u   ON u.id = s.user_id
+         JOIN courses c ON c.id = s.course_id
+         WHERE s.id = ? AND s.expires_at > ?',
+        [$sid, time()]
+    );
+    if ($session) {
+        dbRun('UPDATE sessions SET expires_at = ? WHERE id = ?', [time() + SESSION_DURATION, $sid]);
+    }
+    return $session ?: null;
+}
+
 // ── Router ────────────────────────────────────────────────────────────────────
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -134,7 +152,7 @@ function route(string $method, array $seg, array $body): void {
 
         // Documents
         $s === 'docs' && !$id                                  => handleDocs($method, $body),
-        $s === 'docs' && $id && $sub === 'public'              => handleDocPublic($id, $body),
+        $s === 'docs' && $id && $sub === 'access'              => handleDocAccess($id, $body),
         $s === 'docs' && $id && $sub === 'presence'            => handleDocPresence($id),
         $s === 'docs' && $id && $sub === 'raw'                 => handleDocRaw($id),
         $s === 'docs' && $id && !$sub                          => handleDoc($method, $id, $body),
@@ -842,7 +860,7 @@ function handleAnalytics(): void {
     $unresolvedQs   = dbOne('SELECT COUNT(*) AS n FROM posts WHERE course_id=? AND type=\'question\' AND is_resolved=0', [$cid]);
     $postsThisWeek  = dbOne('SELECT COUNT(*) AS n FROM posts WHERE course_id=? AND created_at > ?', [$cid, time() - 604800]);
     $totalDocs      = dbOne('SELECT COUNT(*) AS n FROM documents WHERE course_id=?', [$cid]);
-    $publishedDocs  = dbOne('SELECT COUNT(*) AS n FROM documents WHERE course_id=? AND is_public=1', [$cid]);
+    $publishedDocs  = dbOne('SELECT COUNT(*) AS n FROM documents WHERE course_id=? AND access_level > 0', [$cid]);
 
     // Top contributors
     $topContributors = dbAll(
@@ -989,14 +1007,16 @@ function handleDocs(string $method, array $body): void {
     $s = requireAuth();
 
     if ($method === 'GET') {
+        // Return own docs + course-visible docs (access_level >= 1)
         $docs = dbAll(
-            'SELECT d.id, d.title, d.is_public, d.version, d.created_by,
+            'SELECT d.id, d.title, d.access_level, d.version, d.created_by,
                     d.created_at, d.updated_at, u.name AS creator_name
              FROM documents d
              JOIN users u ON u.id = d.created_by
              WHERE d.course_id = ?
+               AND (d.created_by = ? OR d.access_level >= 1)
              ORDER BY d.updated_at DESC',
-            [$s['cid']]
+            [$s['cid'], $s['uid']]
         );
         json($docs);
     } elseif ($method === 'POST') {
@@ -1016,6 +1036,44 @@ function handleDocs(string $method, array $body): void {
 }
 
 function handleDoc(string $method, int $id, array $body): void {
+    // GET with access_level=3 is publicly accessible without auth
+    if ($method === 'GET') {
+        $s = optionalAuth();
+        if ($s) {
+            $doc = dbOne(
+                'SELECT d.*, u.name AS creator_name
+                 FROM documents d JOIN users u ON u.id = d.created_by
+                 WHERE d.id = ? AND d.course_id = ?',
+                [$id, $s['cid']]
+            );
+            if ($doc && (int)$doc['access_level'] === 0
+                && (int)$s['uid'] !== (int)$doc['created_by']
+                && $s['role'] !== 'instructor') {
+                jsonError(403, 'This document is private');
+            }
+        } else {
+            // Unauthenticated: only publicly visible docs
+            $doc = dbOne(
+                'SELECT d.*, u.name AS creator_name
+                 FROM documents d JOIN users u ON u.id = d.created_by
+                 WHERE d.id = ? AND d.access_level = 3',
+                [$id]
+            );
+        }
+        if (!$doc) jsonError(404, 'Document not found');
+
+        $editingBy = null;
+        if ($s && $doc['editing_uid'] && $doc['editing_since']
+            && (time() - (int)$doc['editing_since']) < 120
+            && (int)$doc['editing_uid'] !== $s['uid']) {
+            $eu = dbOne('SELECT name FROM users WHERE id = ?', [$doc['editing_uid']]);
+            if ($eu) $editingBy = $eu['name'];
+        }
+        json(array_merge($doc, ['editing_by' => $editingBy]));
+        return;
+    }
+
+    // All other methods require auth
     $s = requireAuth();
     $doc = dbOne(
         'SELECT d.*, u.name AS creator_name
@@ -1025,23 +1083,16 @@ function handleDoc(string $method, int $id, array $body): void {
     );
     if (!$doc) jsonError(404, 'Document not found');
 
-    if ($method === 'GET') {
-        $editingBy = null;
-        if ($doc['editing_uid'] && $doc['editing_since'] && (time() - (int)$doc['editing_since']) < 120) {
-            if ((int)$doc['editing_uid'] !== $s['uid']) {
-                $eu = dbOne('SELECT name FROM users WHERE id = ?', [$doc['editing_uid']]);
-                if ($eu) $editingBy = $eu['name'];
-            }
-        }
-        json(array_merge($doc, ['editing_by' => $editingBy]));
+    if ($method === 'PUT') {
+        $accessLevel = (int)$doc['access_level'];
+        $isOwner = (int)$s['uid'] === (int)$doc['created_by'] || $s['role'] === 'instructor';
 
-    } elseif ($method === 'PUT') {
-        // Published docs are read-only for non-owners
-        if ($doc['is_public'] && (int)$s['uid'] !== (int)$doc['created_by'] && $s['role'] !== 'instructor') {
-            jsonError(403, 'This document is published and locked for editing');
+        // access_level 2 = course-collaborative: any course member may edit
+        // all other levels: owner/instructor only
+        if (!$isOwner && $accessLevel !== 2) {
+            jsonError(403, 'You do not have permission to edit this document');
         }
 
-        // Conflict detection: reject if client has a stale version
         $clientVersion = isset($body['version']) ? (int)$body['version'] : 0;
         if ($clientVersion && $clientVersion !== (int)$doc['version']) {
             http_response_code(409);
@@ -1078,18 +1129,22 @@ function handleDoc(string $method, int $id, array $body): void {
     }
 }
 
-function handleDocPublic(int $id, array $body): void {
+function handleDocAccess(int $id, array $body): void {
     $s = requireAuth();
     $doc = dbOne('SELECT * FROM documents WHERE id = ? AND course_id = ?', [$id, $s['cid']]);
     if (!$doc) jsonError(404, 'Document not found');
 
     if ((int)$s['uid'] !== (int)$doc['created_by'] && $s['role'] !== 'instructor') {
-        jsonError(403, 'Only the creator or an instructor can publish this document');
+        jsonError(403, 'Only the creator or an instructor can change document access');
     }
 
-    $isPublic = isset($body['is_public']) ? (int)(bool)$body['is_public'] : ((int)$doc['is_public'] ? 0 : 1);
-    dbRun('UPDATE documents SET is_public = ? WHERE id = ?', [$isPublic, $id]);
-    json(['ok' => true, 'is_public' => $isPublic]);
+    if (!isset($body['access_level']) || !in_array((int)$body['access_level'], [0, 1, 2, 3], true)) {
+        jsonError(400, 'access_level must be 0 (private), 1 (course view), 2 (course edit), or 3 (public view)');
+    }
+
+    $level = (int)$body['access_level'];
+    dbRun('UPDATE documents SET access_level = ? WHERE id = ?', [$level, $id]);
+    json(['ok' => true, 'access_level' => $level]);
 }
 
 function handleDocPresence(int $id): void {
@@ -1114,8 +1169,17 @@ function handleDocPresence(int $id): void {
 }
 
 function handleDocRaw(int $id): void {
-    $s = requireAuth();
-    $doc = dbOne('SELECT * FROM documents WHERE id = ? AND course_id = ?', [$id, $s['cid']]);
+    $s = optionalAuth();
+    if ($s) {
+        $doc = dbOne('SELECT * FROM documents WHERE id = ? AND course_id = ?', [$id, $s['cid']]);
+        if ($doc && (int)$doc['access_level'] === 0
+            && (int)$s['uid'] !== (int)$doc['created_by']
+            && $s['role'] !== 'instructor') {
+            $doc = null; // treat as not found
+        }
+    } else {
+        $doc = dbOne('SELECT * FROM documents WHERE id = ? AND access_level = 3', [$id]);
+    }
     if (!$doc) jsonError(404, 'Document not found');
 
     $filename = preg_replace('/[^a-zA-Z0-9_\-]/', '-', $doc['title'] ?: 'document') . '.md';
