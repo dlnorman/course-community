@@ -337,18 +337,18 @@ function renderSidebar() {
                 <span class="sidebar-icon" aria-hidden="true">🧩</span>
                 <span>Collaboration Boards</span>
             </div>
-            <div class="sidebar-item ${'docs|doc'.includes(state.view) ? 'active' : ''}" data-nav="/docs"
-                 tabindex="0" role="button" ${('docs|doc'.includes(state.view)) ? 'aria-current="page"' : ''}>
+            <div class="sidebar-item ${['docs','doc'].includes(state.view) ? 'active' : ''}" data-nav="/docs"
+                 tabindex="0" role="button" ${['docs','doc'].includes(state.view) ? 'aria-current="page"' : ''}>
                 <span class="sidebar-icon" aria-hidden="true">📄</span>
                 <span>Documents</span>
             </div>
-            <div class="sidebar-item ${'feedback|feedbackDetail|feedbackReview'.includes(state.view) ? 'active' : ''}" data-nav="/feedback"
-                 tabindex="0" role="button" ${('feedback|feedbackDetail|feedbackReview'.includes(state.view)) ? 'aria-current="page"' : ''}>
+            <div class="sidebar-item ${['feedback','feedbackDetail','feedbackReview'].includes(state.view) ? 'active' : ''}" data-nav="/feedback"
+                 tabindex="0" role="button" ${['feedback','feedbackDetail','feedbackReview'].includes(state.view) ? 'aria-current="page"' : ''}>
                 <span class="sidebar-icon" aria-hidden="true">🔁</span>
                 <span>Peer Feedback</span>
             </div>
-            <div class="sidebar-item ${'pulse|pulseDetail'.includes(state.view) ? 'active' : ''}" data-nav="/pulse"
-                 tabindex="0" role="button" ${'pulse|pulseDetail'.includes(state.view) ? 'aria-current="page"' : ''}>
+            <div class="sidebar-item ${['pulse','pulseDetail'].includes(state.view) ? 'active' : ''}" data-nav="/pulse"
+                 tabindex="0" role="button" ${['pulse','pulseDetail'].includes(state.view) ? 'aria-current="page"' : ''}>
                 <span class="sidebar-icon" aria-hidden="true">📡</span>
                 <span>Pulse Checks</span>
                 ${state.pulseHasActive ? '<span class="notif-badge" style="position:relative;top:auto;right:auto;margin-left:auto">●</span>' : ''}
@@ -367,7 +367,7 @@ function renderSidebar() {
             <div class="sidebar-item ${state.view === 'analytics' ? 'active' : ''}" data-nav="/analytics"
                  tabindex="0" role="button" ${state.view === 'analytics' ? 'aria-current="page"' : ''}>
                 <span class="sidebar-icon" aria-hidden="true">📊</span>
-                <span>Community Pulse</span>
+                <span>Course Overview</span>
             </div>
             <div class="sidebar-item ${state.view === 'moderation' ? 'active' : ''}" data-nav="/moderation"
                  tabindex="0" role="button" ${state.view === 'moderation' ? 'aria-current="page"' : ''}>
@@ -410,12 +410,13 @@ function refreshSidebar() {
         let active = false;
         if (nav === '/' && state.view === 'feed') active = true;
         if (nav === '/boards' && state.view === 'boards') active = true;
-        if (nav === '/docs' && (state.view === 'docs' || state.view === 'doc')) active = true;
+        if (nav === '/docs' && ['docs','doc'].includes(state.view)) active = true;
         if (nav === '/members' && state.view === 'members') active = true;
         if (nav === '/analytics' && state.view === 'analytics') active = true;
         if (nav === '/moderation' && state.view === 'moderation') active = true;
-        if (nav === '/feedback' && 'feedback|feedbackDetail|feedbackReview'.includes(state.view)) active = true;
-        if (nav === '/pulse' && 'pulse|pulseDetail'.includes(state.view)) active = true;
+        if (nav === '/invites' && state.view === 'invites') active = true;
+        if (nav === '/feedback' && ['feedback','feedbackDetail','feedbackReview'].includes(state.view)) active = true;
+        if (nav === '/pulse' && ['pulse','pulseDetail'].includes(state.view)) active = true;
         if (item.dataset.spaceId && +item.dataset.spaceId === state.currentSpaceId) active = true;
         if (active) {
             item.classList.add('active');
@@ -501,8 +502,11 @@ const views = {
         }
 
         try {
-            const data = await api.get('/api/posts?page=1');
-            setView(renderFeedView(data.posts, data));
+            const [data, summary] = await Promise.all([
+                api.get('/api/posts?page=1'),
+                api.get('/api/course-summary').catch(() => null),
+            ]);
+            setView(renderFeedView(data.posts, data, summary));
             bindFeedEvents();
         } catch (e) {
             setView(errorState(e.message));
@@ -725,7 +729,8 @@ const views = {
 // RENDER: FEED
 // ═══════════════════════════════════════════════════════════════════
 
-function renderFeedView(posts, meta) {
+function renderFeedView(posts, meta, summary = null) {
+    const highlights = renderFeedHighlights(summary);
     return `
     <div class="page-header">
         <div class="page-header-left">
@@ -734,6 +739,8 @@ function renderFeedView(posts, meta) {
         </div>
         <button class="btn btn-primary" onclick="openCompose()">+ New Post</button>
     </div>
+
+    ${highlights}
 
     <div class="tabs" id="sort-tabs" role="tablist" aria-label="Sort posts">
         <button class="tab active" data-sort="recent" role="tab" aria-selected="true">Recent</button>
@@ -744,6 +751,63 @@ function renderFeedView(posts, meta) {
     ${renderPostCards(posts, true)}
     ${meta.pages > 1 ? renderPagination(meta.page, meta.pages) : ''}
     `;
+}
+
+function renderFeedHighlights(summary) {
+    if (!summary) return '';
+
+    const chips = [];
+
+    if (summary.active_pulse) {
+        chips.push(`<button class="feed-highlight-chip feed-highlight-chip--pulse"
+            onclick="router.navigate('/pulse/${summary.active_pulse.id}')" aria-label="Active pulse check">
+            <span class="feed-highlight-dot"></span>
+            📡 <strong>Live:</strong> ${esc(summary.active_pulse.title)}
+        </button>`);
+    }
+
+    if (summary.unanswered_questions > 0) {
+        chips.push(`<button class="feed-highlight-chip feed-highlight-chip--questions"
+            onclick="document.querySelector('[data-sort=recent]')?.click()"
+            aria-label="${summary.unanswered_questions} unanswered questions">
+            ❓ <strong>${summary.unanswered_questions}</strong> unanswered question${summary.unanswered_questions !== 1 ? 's' : ''}
+        </button>`);
+    }
+
+    if (summary.open_feedback?.length) {
+        summary.open_feedback.forEach(f => {
+            const label = f.status === 'reviewing' ? 'Review due' : 'Submission open';
+            chips.push(`<button class="feed-highlight-chip feed-highlight-chip--feedback"
+                onclick="router.navigate('/feedback/${f.id}')" aria-label="${esc(f.title)}">
+                🔁 <strong>${label}:</strong> ${esc(f.title)}
+            </button>`);
+        });
+    }
+
+    if (summary.posts_this_week > 0 && chips.length === 0) {
+        chips.push(`<span class="feed-highlight-chip feed-highlight-chip--activity">
+            🔥 <strong>${summary.posts_this_week}</strong> post${summary.posts_this_week !== 1 ? 's' : ''} this week
+        </span>`);
+    }
+
+    if (!chips.length) return '';
+
+    const announcement = summary.announcement ? `
+    <div class="feed-announcement" onclick="router.navigate('/post/${summary.announcement.id}')" role="button" tabindex="0"
+         onkeydown="if(event.key==='Enter'){router.navigate('/post/${summary.announcement.id}')}">
+        <span class="feed-announcement-icon">📣</span>
+        <div>
+            <div class="feed-announcement-title">${esc(summary.announcement.title)}</div>
+            ${summary.announcement.content_short ? `<div class="feed-announcement-body">${esc(summary.announcement.content_short)}</div>` : ''}
+        </div>
+        <span class="feed-announcement-time">${timeAgo(summary.announcement.created_at)}</span>
+    </div>` : '';
+
+    return `
+    <div class="feed-highlights">
+        ${announcement}
+        <div class="feed-highlight-chips">${chips.join('')}</div>
+    </div>`;
 }
 
 function renderSpaceView(space, posts, meta) {
@@ -1359,8 +1423,8 @@ function renderAnalytics(data) {
     return `
     <div class="page-header">
         <div class="page-header-left">
-            <h1 class="page-title">Community Pulse</h1>
-            <p class="page-subtitle">Understanding engagement and participation in ${esc(state.course.title)}</p>
+            <h1 class="page-title">Course Overview</h1>
+            <p class="page-subtitle">Engagement, activity, and participation in ${esc(state.course.title)}</p>
         </div>
     </div>
 
@@ -1382,8 +1446,8 @@ function renderAnalytics(data) {
             <div class="stat-card-label">Unanswered Questions</div>
         </div>
         <div class="stat-card">
-            <div class="stat-card-value">${data.total_docs}</div>
-            <div class="stat-card-label">Documents <span style="font-size:0.75em;color:var(--text-muted)">(${data.published_docs} published)</span></div>
+            <div class="stat-card-value">${data.posts_this_week}</div>
+            <div class="stat-card-label">Posts This Week</div>
         </div>
     </div>
 
@@ -1435,7 +1499,44 @@ function renderAnalytics(data) {
                 <span class="silent-item-last">Last seen: ${s.last_seen ? timeAgo(s.last_seen) : 'never'}</span>
             </div>`).join('')}
         </div>
-    </div>` : ''}`;
+    </div>` : ''}
+
+    <div class="analytics-feature-grid">
+        <div class="analytics-feature-card" onclick="router.navigate('/boards')" style="cursor:pointer">
+            <div class="analytics-feature-icon">🧩</div>
+            <div class="analytics-feature-title">Collaboration Boards</div>
+            <div class="analytics-feature-stats">
+                <div class="analytics-feature-stat"><strong>${data.total_boards}</strong><span>boards</span></div>
+                <div class="analytics-feature-stat"><strong>${data.total_cards}</strong><span>cards</span></div>
+            </div>
+        </div>
+        <div class="analytics-feature-card" onclick="router.navigate('/docs')" style="cursor:pointer">
+            <div class="analytics-feature-icon">📄</div>
+            <div class="analytics-feature-title">Documents</div>
+            <div class="analytics-feature-stats">
+                <div class="analytics-feature-stat"><strong>${data.total_docs}</strong><span>total</span></div>
+                <div class="analytics-feature-stat"><strong>${data.published_docs}</strong><span>published</span></div>
+            </div>
+        </div>
+        <div class="analytics-feature-card" onclick="router.navigate('/feedback')" style="cursor:pointer">
+            <div class="analytics-feature-icon">🔁</div>
+            <div class="analytics-feature-title">Peer Feedback</div>
+            <div class="analytics-feature-stats">
+                <div class="analytics-feature-stat"><strong>${data.total_pf_assign}</strong><span>assignments</span></div>
+                <div class="analytics-feature-stat"><strong>${data.active_pf_assign}</strong><span>active</span></div>
+                <div class="analytics-feature-stat"><strong>${data.total_pf_subs}</strong><span>submissions</span></div>
+            </div>
+        </div>
+        <div class="analytics-feature-card" onclick="router.navigate('/pulse')" style="cursor:pointer">
+            <div class="analytics-feature-icon">📡</div>
+            <div class="analytics-feature-title">Pulse Checks</div>
+            <div class="analytics-feature-stats">
+                <div class="analytics-feature-stat"><strong>${data.total_pulse}</strong><span>checks</span></div>
+                <div class="analytics-feature-stat"><strong>${data.active_pulse}</strong><span>active</span></div>
+                <div class="analytics-feature-stat"><strong>${data.total_pulse_resp}</strong><span>responses</span></div>
+            </div>
+        </div>
+    </div>`;
 }
 
 // ═══════════════════════════════════════════════════════════════════

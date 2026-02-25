@@ -154,8 +154,9 @@ function route(string $method, array $seg, array $body): void {
         // Notifications
         $s === 'notifications'                        => handleNotifications($method),
 
-        // Analytics
+        // Analytics / Course Overview
         $s === 'analytics'                            => handleAnalytics(),
+        $s === 'course-summary'                       => handleCourseSummary(),
 
         // Documents
         $s === 'docs' && !$id                                  => handleDocs($method, $body),
@@ -969,6 +970,20 @@ function handleAnalytics(): void {
     $totalDocs      = dbOne('SELECT COUNT(*) AS n FROM documents WHERE course_id=?', [$cid]);
     $publishedDocs  = dbOne('SELECT COUNT(*) AS n FROM documents WHERE course_id=? AND access_level > 0', [$cid]);
 
+    // Boards
+    $totalBoards    = dbOne('SELECT COUNT(*) AS n FROM boards WHERE course_id=?', [$cid]);
+    $totalCards     = dbOne('SELECT COUNT(*) AS n FROM board_cards bc JOIN boards b ON b.id=bc.board_id WHERE b.course_id=?', [$cid]);
+
+    // Peer Feedback
+    $totalPfAssign  = dbOne('SELECT COUNT(*) AS n FROM pf_assignments WHERE course_id=?', [$cid]);
+    $activePfAssign = dbOne("SELECT COUNT(*) AS n FROM pf_assignments WHERE course_id=? AND status IN ('open','reviewing')", [$cid]);
+    $totalPfSubs    = dbOne('SELECT COUNT(*) AS n FROM pf_submissions ps JOIN pf_assignments pa ON pa.id=ps.assignment_id WHERE pa.course_id=?', [$cid]);
+
+    // Pulse Checks
+    $totalPulse     = dbOne('SELECT COUNT(*) AS n FROM pulse_checks WHERE course_id=?', [$cid]);
+    $activePulse    = dbOne("SELECT COUNT(*) AS n FROM pulse_checks WHERE course_id=? AND status='active'", [$cid]);
+    $totalPulseResp = dbOne('SELECT COUNT(*) AS n FROM pulse_responses pr JOIN pulse_questions pq ON pq.id=pr.question_id JOIN pulse_checks pc ON pc.id=pq.check_id WHERE pc.course_id=?', [$cid]);
+
     // Top contributors
     $topContributors = dbAll(
         'SELECT u.id, u.name, u.picture,
@@ -1022,6 +1037,62 @@ function handleAnalytics(): void {
         'activity_by_day'   => $activityByDay,
         'space_activity'    => $spaceActivity,
         'silent_students'   => $silent,
+        'total_boards'      => (int)$totalBoards['n'],
+        'total_cards'       => (int)$totalCards['n'],
+        'total_pf_assign'   => (int)$totalPfAssign['n'],
+        'active_pf_assign'  => (int)$activePfAssign['n'],
+        'total_pf_subs'     => (int)$totalPfSubs['n'],
+        'total_pulse'       => (int)$totalPulse['n'],
+        'active_pulse'      => (int)$activePulse['n'],
+        'total_pulse_resp'  => (int)$totalPulseResp['n'],
+    ]);
+}
+
+// ── Course Summary (lightweight, all-user) ────────────────────────────────────
+
+function handleCourseSummary(): void {
+    $s = requireAuth();
+    $cid = $s['cid'];
+
+    // Most recent announcement
+    $announcement = dbOne(
+        "SELECT id, title, content, created_at FROM posts WHERE course_id=? AND type='announcement' ORDER BY created_at DESC LIMIT 1",
+        [$cid]
+    );
+    if ($announcement) {
+        $announcement['content_short'] = mb_strimwidth(strip_tags($announcement['content'] ?? ''), 0, 120, '…');
+    }
+
+    // Active pulse check
+    $activePulse = dbOne(
+        "SELECT id, title FROM pulse_checks WHERE course_id=? AND status='active' LIMIT 1",
+        [$cid]
+    );
+
+    // Unanswered questions
+    $unanswered = dbOne(
+        "SELECT COUNT(*) AS n FROM posts WHERE course_id=? AND type='question' AND is_resolved=0",
+        [$cid]
+    );
+
+    // Open / reviewing peer feedback assignments
+    $openFeedback = dbAll(
+        "SELECT id, title, status, due_at FROM pf_assignments WHERE course_id=? AND status IN ('open','reviewing') ORDER BY due_at LIMIT 3",
+        [$cid]
+    );
+
+    // Posts this week
+    $postsThisWeek = dbOne(
+        'SELECT COUNT(*) AS n FROM posts WHERE course_id=? AND created_at > ?',
+        [$cid, time() - 604800]
+    );
+
+    json([
+        'announcement'         => $announcement,
+        'active_pulse'         => $activePulse,
+        'unanswered_questions' => (int)$unanswered['n'],
+        'open_feedback'        => $openFeedback,
+        'posts_this_week'      => (int)$postsThisWeek['n'],
     ]);
 }
 
