@@ -65,11 +65,11 @@ $_ltiTarget = $_appBase . '/';
         .nav-inner{display:flex;align-items:center;justify-content:space-between;padding:1rem 2rem;max-width:1100px;margin:0 auto}
         .nav-logo{display:flex;align-items:center;gap:0.6rem;color:#EEF0F8;font-weight:700;font-size:1.05rem}
         .nav-logo-mark{font-size:1.4rem;color:var(--accent-l)}
-        .nav-links{display:flex;align-items:center;gap:2rem}
-        .nav-links a{color:#A8AECA;font-size:0.875rem;font-weight:600;transition:color 0.15s}
-        .nav-links a:hover{color:#EEF0F8;text-decoration:none}
-        .nav-cta{background:var(--accent);color:white;padding:0.5rem 1.25rem;border-radius:8px;font-size:0.875rem;font-weight:700;transition:background 0.15s}
-        .nav-cta:hover{background:var(--accent-l);text-decoration:none}
+        .nav-links{display:flex;align-items:center;gap:1.5rem}
+        .nav-links a{color:#A8AECA;font-size:0.875rem;font-weight:600;transition:color 0.15s;text-decoration:none}
+        .nav-links a:hover{color:#EEF0F8}
+        .nav-signin{border:1px solid rgba(255,255,255,0.22);border-radius:6px;padding:0.35rem 0.85rem;color:#EEF0F8 !important;margin-left:0.25rem}
+        .nav-signin:hover{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.4)}
 
         /* ── Hero ── */
         .hero{
@@ -198,7 +198,7 @@ $_ltiTarget = $_appBase . '/';
         }
         @media(max-width:600px){
             .principles-grid{grid-template-columns:1fr}
-            .nav-links a:not(.nav-cta){display:none}
+            .nav-links a:not(.nav-signin){display:none}
         }
     </style>
 </head>
@@ -215,12 +215,9 @@ $_ltiTarget = $_appBase . '/';
             <a href="#features">Features</a>
             <a href="#peer-feedback">Peer Feedback</a>
             <a href="#pulse-checks">Pulse Checks</a>
-            <a href="#moderation">Moderation</a>
             <a href="#design">Principles</a>
-            <a href="#integration">LTI Setup</a>
-            <a href="#install">Install</a>
-            <a href="<?= $_appBase ?>/auth.php?action=login" style="color:#EEF0F8;">Sign in</a>
-            <a class="nav-cta" href="<?= $_appBase ?>/auth.php?action=join">Join a course</a>
+            <a href="#integration">Setup &amp; Deploy</a>
+            <a class="nav-signin" href="<?= $_appBase ?>/auth.php?action=login">Sign in</a>
         </div>
     </div>
 </nav>

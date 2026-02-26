@@ -44,6 +44,8 @@ if ($action === 'logout') {
 
 if ($authed) {
 
+    $viewCourseId = 0; // set by GET ?course=N or by detail-view POST actions
+
     if ($action === 'create_standalone_course') {
         $title = trim($_POST['sa_title'] ?? '');
         $label = trim($_POST['sa_label'] ?? '');
@@ -121,6 +123,95 @@ if ($authed) {
     if ($action === 'restore') {
         $result  = adminDoRestore();
         $message = $result;
+    }
+
+    if ($action === 'admin_enter_course') {
+        $courseId = (int)($_POST['course_id'] ?? 0);
+        if ($courseId) {
+            $adminUser = dbOne("SELECT id FROM users WHERE sub='__admin__' AND issuer='standalone'");
+            if (!$adminUser) {
+                $adminId = (int)dbExec(
+                    "INSERT INTO users (sub, issuer, name, given_name, email) VALUES ('__admin__', 'standalone', 'Admin', 'Admin', '')"
+                );
+            } else {
+                $adminId = (int)$adminUser['id'];
+            }
+            $enrolled = dbOne('SELECT id FROM enrollments WHERE user_id=? AND course_id=?', [$adminId, $courseId]);
+            if ($enrolled) {
+                dbRun('UPDATE enrollments SET role=? WHERE user_id=? AND course_id=?', ['instructor', $adminId, $courseId]);
+            } else {
+                dbExec('INSERT INTO enrollments (user_id, course_id, role) VALUES (?,?,?)', [$adminId, $courseId, 'instructor']);
+            }
+            $token = bin2hex(random_bytes(24));
+            dbExec('INSERT INTO local_auth_tokens (token, user_id, course_id, expires_at) VALUES (?,?,?,?)',
+                [$token, $adminId, $courseId, time() + 3600]);
+            header('Location: ' . rtrim(APP_URL, '/') . '/auth.php?action=magic&token=' . urlencode($token));
+            exit;
+        }
+    }
+
+    if ($action === 'admin_add_member') {
+        $courseId = (int)($_POST['course_id'] ?? 0);
+        $email    = strtolower(trim($_POST['member_email'] ?? ''));
+        $name     = trim($_POST['member_name'] ?? '');
+        $role     = in_array($_POST['member_role'] ?? '', ['instructor', 'student']) ? $_POST['member_role'] : 'student';
+        if ($courseId && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $existing = dbOne("SELECT id, name FROM users WHERE (email=? OR sub=?) AND issuer='standalone'", [$email, $email]);
+            if ($existing) {
+                $userId = (int)$existing['id'];
+                if ($name && $name !== $existing['name']) {
+                    $parts = explode(' ', $name, 2);
+                    dbRun('UPDATE users SET name=?, given_name=? WHERE id=?', [$name, $parts[0], $userId]);
+                }
+            } else {
+                $parts = explode(' ', $name ?: $email, 2);
+                $userId = (int)dbExec(
+                    "INSERT INTO users (sub, issuer, name, given_name, family_name, email) VALUES (?, 'standalone', ?, ?, ?, ?)",
+                    [$email, $name ?: $email, $parts[0], $parts[1] ?? '', $email]
+                );
+            }
+            $enrolled = dbOne('SELECT id FROM enrollments WHERE user_id=? AND course_id=?', [$userId, $courseId]);
+            $verb = $enrolled ? 'Updated' : 'Added';
+            if ($enrolled) {
+                dbRun('UPDATE enrollments SET role=? WHERE user_id=? AND course_id=?', [$role, $userId, $courseId]);
+            } else {
+                dbExec('INSERT INTO enrollments (user_id, course_id, role) VALUES (?,?,?)', [$userId, $courseId, $role]);
+            }
+            $token = bin2hex(random_bytes(24));
+            dbExec('INSERT INTO local_auth_tokens (token, user_id, course_id, expires_at) VALUES (?,?,?,?)',
+                [$token, $userId, $courseId, time() + 604800]);
+            $magicLink = rtrim(APP_URL, '/') . '/auth.php?action=magic&token=' . urlencode($token);
+            $message = $verb . ' <strong>' . htmlspecialchars($email) . '</strong> as ' . $role
+                . '. Magic link (7 days):<br><code style="word-break:break-all;font-size:11px;font-family:monospace;">'
+                . htmlspecialchars($magicLink) . '</code>';
+        } else {
+            $message = 'Error: Valid email address required.';
+        }
+        $viewCourseId = $courseId;
+    }
+
+    if ($action === 'admin_remove_member') {
+        $enrollmentId = (int)($_POST['enrollment_id'] ?? 0);
+        $courseId     = (int)($_POST['course_id'] ?? 0);
+        if ($enrollmentId && $courseId) {
+            $e = dbOne('SELECT e.id, u.name FROM enrollments e JOIN users u ON u.id=e.user_id WHERE e.id=? AND e.course_id=?', [$enrollmentId, $courseId]);
+            if ($e) {
+                dbRun('DELETE FROM enrollments WHERE id=?', [$enrollmentId]);
+                $message = htmlspecialchars($e['name']) . ' removed from course.';
+            }
+        }
+        $viewCourseId = $courseId;
+    }
+
+    if ($action === 'admin_change_role') {
+        $enrollmentId = (int)($_POST['enrollment_id'] ?? 0);
+        $courseId     = (int)($_POST['course_id'] ?? 0);
+        $newRole      = in_array($_POST['new_role'] ?? '', ['instructor', 'student']) ? $_POST['new_role'] : null;
+        if ($enrollmentId && $courseId && $newRole) {
+            dbRun('UPDATE enrollments SET role=? WHERE id=? AND course_id=?', [$newRole, $enrollmentId, $courseId]);
+            $message = 'Role updated to ' . $newRole . '.';
+        }
+        $viewCourseId = $courseId;
     }
 
 }
@@ -371,6 +462,39 @@ if ($authed) {
     );
 
     $standaloneCourses = array_filter($courses, fn($c) => ($c['course_type'] ?? 'lti') === 'standalone');
+
+    // Detail view: set from GET param (POST actions set $viewCourseId themselves)
+    if (!$viewCourseId && isset($_GET['course'])) {
+        $viewCourseId = (int)$_GET['course'];
+    }
+
+    $courseDetail        = null;
+    $courseDetailStats   = [];
+    $courseDetailMembers = [];
+    if ($viewCourseId) {
+        $courseDetail = dbOne('SELECT * FROM courses WHERE id=?', [$viewCourseId]);
+        if ($courseDetail) {
+            $courseDetailMembers = dbAll(
+                "SELECT e.id AS enrollment_id, e.role, e.last_seen,
+                        u.id AS user_id, u.name, u.given_name, u.email, u.sub, u.issuer
+                   FROM enrollments e
+                   JOIN users u ON u.id = e.user_id
+                  WHERE e.course_id = ?
+                    AND NOT (u.sub = '__admin__' AND u.issuer = 'standalone')
+                  ORDER BY e.role DESC, u.name ASC",
+                [$viewCourseId]
+            );
+            $courseDetailStats = [
+                'members'  => count($courseDetailMembers),
+                'posts'    => (int)(dbOne('SELECT COUNT(*) n FROM posts      WHERE course_id=?', [$viewCourseId])['n'] ?? 0),
+                'comments' => (int)(dbOne('SELECT COUNT(*) n FROM comments c JOIN posts p ON p.id=c.post_id WHERE p.course_id=?', [$viewCourseId])['n'] ?? 0),
+                'boards'   => (int)(dbOne('SELECT COUNT(*) n FROM boards     WHERE course_id=?', [$viewCourseId])['n'] ?? 0),
+                'docs'     => (int)(dbOne('SELECT COUNT(*) n FROM documents  WHERE course_id=?', [$viewCourseId])['n'] ?? 0),
+                'pulse'    => (int)(dbOne('SELECT COUNT(*) n FROM pulse_checks WHERE course_id=?', [$viewCourseId])['n'] ?? 0),
+                'pf'       => (int)(dbOne('SELECT COUNT(*) n FROM pf_assignments WHERE course_id=?', [$viewCourseId])['n'] ?? 0),
+            ];
+        }
+    }
 }
 
 // ── HTML ──────────────────────────────────────────────────────────────────────
@@ -757,6 +881,118 @@ a:hover { text-decoration: underline; }
     gap: 10px;
     justify-content: flex-end;
 }
+
+/* ── Detail view ────────────────────────────────────────── */
+
+.breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 20px;
+}
+.breadcrumb a { color: var(--accent); }
+.breadcrumb-sep { color: var(--border); }
+
+.detail-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+.detail-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.2;
+}
+.detail-subtitle {
+    font-family: var(--font);
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+}
+.detail-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; }
+
+.mini-stats {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 24px;
+}
+.mini-stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 14px;
+    text-align: center;
+    min-width: 70px;
+}
+.mini-stat-val {
+    font-family: var(--font);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+}
+.mini-stat-lbl {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-top: 3px;
+}
+
+.role-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-family: var(--font);
+}
+.role-badge.instructor {
+    background: rgba(88,166,255,0.12);
+    color: var(--accent);
+    border: 1px solid rgba(88,166,255,0.3);
+}
+.role-badge.student {
+    background: rgba(255,255,255,0.05);
+    color: var(--muted);
+    border: 1px solid var(--border);
+}
+
+.add-member-form {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    padding: 14px 18px;
+    background: rgba(255,255,255,0.02);
+    border-top: 1px solid var(--border);
+}
+.add-member-form label {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 4px;
+}
+.add-member-form input,
+.add-member-form select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 6px 10px;
+    font-size: 13px;
+}
+.add-member-form input:focus,
+.add-member-form select:focus { border-color: var(--accent); outline: none; }
 </style>
 </head>
 <body>
@@ -814,10 +1050,156 @@ a:hover { text-decoration: underline; }
 
     <?php if ($message): ?>
         <div class="<?= str_starts_with($message, 'Error') ? 'error-msg' : 'success-msg' ?>">
-            <?= htmlspecialchars($message) ?>
+            <?= $message ?>
         </div>
     <?php endif; ?>
 
+    <?php if ($courseDetail): ?>
+    <!-- Course detail view -->
+    <div class="breadcrumb">
+        <a href="<?= $adminUrl ?>">All Courses</a>
+        <span class="breadcrumb-sep">›</span>
+        <span><?= htmlspecialchars($courseDetail['title']) ?></span>
+    </div>
+
+    <div class="detail-header">
+        <div>
+            <div class="detail-title"><?= htmlspecialchars($courseDetail['title']) ?></div>
+            <div class="detail-subtitle">
+                ID: <?= (int)$courseDetail['id'] ?>
+                <?php if ($courseDetail['label']): ?>
+                    &nbsp;·&nbsp; <?= htmlspecialchars($courseDetail['label']) ?>
+                <?php endif; ?>
+                &nbsp;·&nbsp;
+                <?php if (($courseDetail['course_type'] ?? 'lti') === 'standalone'): ?>
+                    standalone
+                <?php else: ?>
+                    LTI — <?= htmlspecialchars(parse_url($courseDetail['issuer'] ?? '', PHP_URL_HOST) ?: ($courseDetail['issuer'] ?? 'unknown')) ?>
+                <?php endif; ?>
+                &nbsp;·&nbsp; Created <?= date('Y-m-d', (int)$courseDetail['created_at']) ?>
+            </div>
+        </div>
+        <div class="detail-actions">
+            <form method="POST" action="<?= $adminUrl ?>">
+                <input type="hidden" name="action" value="admin_enter_course">
+                <input type="hidden" name="course_id" value="<?= (int)$courseDetail['id'] ?>">
+                <button type="submit" class="btn btn-success">Enter Course →</button>
+            </form>
+            <button class="btn btn-danger"
+                    onclick="confirmDelete(<?= (int)$courseDetail['id'] ?>, <?= json_encode($courseDetail['title']) ?>)">
+                Delete Course
+            </button>
+        </div>
+    </div>
+
+    <!-- Mini stats -->
+    <div class="mini-stats">
+        <?php foreach ([
+            ['Members',   $courseDetailStats['members']],
+            ['Posts',     $courseDetailStats['posts']],
+            ['Replies',   $courseDetailStats['comments']],
+            ['Boards',    $courseDetailStats['boards']],
+            ['Docs',      $courseDetailStats['docs']],
+            ['Pulse',     $courseDetailStats['pulse']],
+            ['Peer FB',   $courseDetailStats['pf']],
+        ] as [$lbl, $val]): ?>
+        <div class="mini-stat">
+            <div class="mini-stat-val"><?= $val ?></div>
+            <div class="mini-stat-lbl"><?= $lbl ?></div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+
+    <!-- Members -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-title">Members</span>
+            <span style="color:var(--muted);font-size:12px;"><?= count($courseDetailMembers) ?> enrolled</span>
+        </div>
+
+        <?php if (empty($courseDetailMembers)): ?>
+            <div class="empty-state">No members yet.</div>
+        <?php else: ?>
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email / ID</th>
+                    <th>Role</th>
+                    <th>Last Seen</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($courseDetailMembers as $m): ?>
+                <tr>
+                    <td style="font-weight:600;"><?= htmlspecialchars($m['given_name'] ?: $m['name']) ?></td>
+                    <td>
+                        <span style="font-size:12px;color:var(--muted);">
+                            <?= htmlspecialchars($m['email'] ?: $m['sub']) ?>
+                        </span>
+                    </td>
+                    <td>
+                        <span class="role-badge <?= htmlspecialchars($m['role']) ?>">
+                            <?= htmlspecialchars($m['role']) ?>
+                        </span>
+                    </td>
+                    <td style="font-size:12px;color:var(--muted);white-space:nowrap;">
+                        <?= $m['last_seen'] ? date('Y-m-d', (int)$m['last_seen']) : 'never' ?>
+                    </td>
+                    <td style="white-space:nowrap;">
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <!-- Change role -->
+                            <form method="POST" action="<?= $adminUrl ?>?course=<?= (int)$courseDetail['id'] ?>" style="display:inline;">
+                                <input type="hidden" name="action" value="admin_change_role">
+                                <input type="hidden" name="course_id" value="<?= (int)$courseDetail['id'] ?>">
+                                <input type="hidden" name="enrollment_id" value="<?= (int)$m['enrollment_id'] ?>">
+                                <input type="hidden" name="new_role" value="<?= $m['role'] === 'instructor' ? 'student' : 'instructor' ?>">
+                                <button type="submit" class="btn btn-default" style="font-size:11px;padding:4px 10px;">
+                                    → <?= $m['role'] === 'instructor' ? 'Student' : 'Instructor' ?>
+                                </button>
+                            </form>
+                            <!-- Remove -->
+                            <form method="POST" action="<?= $adminUrl ?>?course=<?= (int)$courseDetail['id'] ?>"
+                                  style="display:inline;"
+                                  onsubmit="return confirm('Remove <?= htmlspecialchars(addslashes($m['name'])) ?> from this course?')">
+                                <input type="hidden" name="action" value="admin_remove_member">
+                                <input type="hidden" name="course_id" value="<?= (int)$courseDetail['id'] ?>">
+                                <input type="hidden" name="enrollment_id" value="<?= (int)$m['enrollment_id'] ?>">
+                                <button type="submit" class="btn btn-danger" style="font-size:11px;padding:4px 10px;">Remove</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php endif; ?>
+
+        <!-- Add member form -->
+        <form method="POST" action="<?= $adminUrl ?>?course=<?= (int)$courseDetail['id'] ?>" class="add-member-form">
+            <input type="hidden" name="action" value="admin_add_member">
+            <input type="hidden" name="course_id" value="<?= (int)$courseDetail['id'] ?>">
+            <div>
+                <label>Email *</label>
+                <input type="email" name="member_email" required placeholder="user@example.com" style="width:200px;">
+            </div>
+            <div>
+                <label>Full Name</label>
+                <input type="text" name="member_name" placeholder="Optional" style="width:160px;">
+            </div>
+            <div>
+                <label>Role</label>
+                <select name="member_role">
+                    <option value="student">Student</option>
+                    <option value="instructor">Instructor</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-default" style="margin-bottom:1px;">Add &amp; Generate Link</button>
+        </form>
+    </div>
+
+    <?php else: // main dashboard ?>
     <!-- Stats -->
     <div class="stats-grid">
         <div class="stat-card">
@@ -929,10 +1311,13 @@ a:hover { text-decoration: underline; }
                         <?= date('Y-m-d', (int)$c['created_at']) ?>
                     </td>
                     <td style="white-space:nowrap;">
-                        <button class="btn btn-danger"
-                                onclick="confirmDelete(<?= (int)$c['id'] ?>, <?= json_encode(htmlspecialchars($c['title'])) ?>)">
-                            Delete
-                        </button>
+                        <div style="display:flex;gap:6px;">
+                            <a href="<?= $adminUrl ?>?course=<?= (int)$c['id'] ?>" class="btn btn-default">View</a>
+                            <button class="btn btn-danger"
+                                    onclick="confirmDelete(<?= (int)$c['id'] ?>, <?= json_encode($c['title']) ?>)">
+                                Delete
+                            </button>
+                        </div>
                     </td>
                 </tr>
             <?php endforeach; ?>
@@ -1014,6 +1399,7 @@ a:hover { text-decoration: underline; }
         </div>
     </div>
 
+    <?php endif; // courseDetail vs dashboard ?>
 </div><!-- /admin-wrap -->
 
 <!-- Confirm delete dialog -->

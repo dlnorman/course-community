@@ -232,6 +232,7 @@ function renderTopbar() {
                 <div class="account-dropdown" id="account-dropdown" hidden>
                     <div class="account-dropdown-name">${esc(state.user.name || state.user.email || 'Account')}</div>
                     <button class="account-dropdown-item" id="acct-profile-btn">My Profile</button>
+                    <a class="account-dropdown-item" href="${(window.APP_CONFIG?.baseUrl ?? '')}/landing.php" target="_blank" rel="noopener">About Course Community ↗</a>
                     <div class="account-dropdown-divider"></div>
                     <button class="account-dropdown-item account-dropdown-signout" id="acct-signout-btn">Sign out</button>
                 </div>
