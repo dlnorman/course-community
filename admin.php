@@ -475,8 +475,25 @@ if ($authed) {
         $courseDetail = dbOne('SELECT * FROM courses WHERE id=?', [$viewCourseId]);
         if ($courseDetail) {
             $courseDetailMembers = dbAll(
-                "SELECT e.id AS enrollment_id, e.role, e.last_seen,
-                        u.id AS user_id, u.name, u.given_name, u.email, u.sub, u.issuer
+                "SELECT e.id AS enrollment_id, e.role,
+                        u.id AS user_id, u.name, u.given_name, u.email, u.sub, u.issuer,
+                        MAX(
+                            COALESCE((SELECT MAX(p.created_at)  FROM posts     p WHERE p.author_id = u.id AND p.course_id = e.course_id), 0),
+                            COALESCE((SELECT MAX(c.created_at)  FROM comments  c JOIN posts p ON p.id = c.post_id WHERE c.author_id = u.id AND p.course_id = e.course_id), 0),
+                            COALESCE((SELECT MAX(r.created_at)  FROM reactions r JOIN posts p ON p.id = r.target_id WHERE r.user_id = u.id AND r.target_type = 'post' AND p.course_id = e.course_id), 0),
+                            COALESCE((SELECT MAX(v.created_at)  FROM votes     v JOIN posts p ON p.id = v.target_id WHERE v.user_id = u.id AND v.target_type = 'post' AND p.course_id = e.course_id), 0),
+                            COALESCE((SELECT MAX(pr.created_at) FROM pulse_responses pr
+                                        JOIN pulse_questions pq ON pq.id = pr.question_id
+                                        JOIN pulse_checks    pc ON pc.id = pq.check_id
+                                       WHERE pr.user_id = u.id AND pc.course_id = e.course_id), 0),
+                            COALESCE((SELECT MAX(ps.submitted_at) FROM pf_submissions ps
+                                        JOIN pf_assignments pa ON pa.id = ps.assignment_id
+                                       WHERE ps.author_id = u.id AND pa.course_id = e.course_id), 0),
+                            COALESCE((SELECT MAX(pr2.submitted_at) FROM pf_responses pr2
+                                        JOIN pf_review_assignments ra ON ra.id = pr2.review_assignment_id
+                                        JOIN pf_assignments pa ON pa.id = ra.assignment_id
+                                       WHERE ra.reviewer_id = u.id AND pa.course_id = e.course_id), 0)
+                        ) AS last_active
                    FROM enrollments e
                    JOIN users u ON u.id = e.user_id
                   WHERE e.course_id = ?
@@ -1126,7 +1143,7 @@ a:hover { text-decoration: underline; }
                     <th>Name</th>
                     <th>Email / ID</th>
                     <th>Role</th>
-                    <th>Last Seen</th>
+                    <th>Last Active</th>
                     <th></th>
                 </tr>
             </thead>
@@ -1145,7 +1162,7 @@ a:hover { text-decoration: underline; }
                         </span>
                     </td>
                     <td style="font-size:12px;color:var(--muted);white-space:nowrap;">
-                        <?= $m['last_seen'] ? date('Y-m-d', (int)$m['last_seen']) : 'never' ?>
+                        <?= (int)$m['last_active'] > 0 ? date('Y-m-d', (int)$m['last_active']) : 'no activity' ?>
                     </td>
                     <td style="white-space:nowrap;">
                         <div style="display:flex;gap:6px;align-items:center;">
