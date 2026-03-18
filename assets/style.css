@@ -698,6 +698,83 @@ hr { border: none; border-top: 1px solid var(--border); }
 .composer-textarea:focus { outline: none; border-color: var(--accent); }
 .composer-footer { display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; margin-top: 0.75rem; }
 
+/* ── Compose toolbar (emoji + GIF buttons) ───────────────────────────────── */
+.compose-toolbar {
+    display: flex; gap: 0.25rem; padding: 0.25rem 0;
+}
+.compose-tool-btn {
+    padding: 0.2rem 0.55rem; border-radius: var(--r-sm); border: 1px solid var(--border);
+    background: var(--bg-surface); color: var(--text-secondary);
+    font-size: 0.85rem; line-height: 1; cursor: pointer;
+    transition: all var(--t-fast);
+}
+.compose-tool-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
+.gif-tool-btn { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; padding: 0.2rem 0.5rem; }
+
+/* ── Compose picker (floating popover) ───────────────────────────────────── */
+.compose-picker {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+    overflow: hidden;
+}
+.emoji-compose-picker { width: 280px; }
+.gif-compose-picker   { width: 320px; }
+
+.compose-picker-tabs {
+    display: flex; gap: 0.25rem; padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--border); background: var(--bg-tint);
+}
+.compose-picker-tab {
+    padding: 0.25rem 0.45rem; border-radius: var(--r-sm); border: none;
+    background: transparent; font-size: 1.1rem; cursor: pointer;
+    transition: background var(--t-fast);
+}
+.compose-picker-tab:hover,
+.compose-picker-tab.active { background: var(--accent-tint); }
+
+.compose-picker-grid {
+    display: flex; flex-wrap: wrap; gap: 0.1rem;
+    padding: 0.5rem; max-height: 200px; overflow-y: auto;
+}
+
+/* ── GIF picker internals ────────────────────────────────────────────────── */
+.gif-search-bar { padding: 0.5rem; border-bottom: 1px solid var(--border); }
+.gif-search-input {
+    width: 100%; border: 1px solid var(--border); border-radius: var(--r-md);
+    padding: 0.4rem 0.75rem; font-size: 0.875rem;
+    background: var(--bg-tint); color: var(--text-primary);
+}
+.gif-search-input:focus { outline: none; border-color: var(--accent); }
+.gif-results { max-height: 220px; overflow-y: auto; }
+.gif-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 4px; }
+.gif-item {
+    width: 100%; aspect-ratio: 1; object-fit: cover; cursor: pointer;
+    border-radius: var(--r-sm); transition: opacity var(--t-fast);
+}
+.gif-item:hover { opacity: 0.85; }
+.gif-loading, .gif-no-results {
+    font-size: 0.8rem; color: var(--text-muted); padding: 0.75rem; text-align: center;
+}
+.gif-url-row { display: flex; gap: 0.5rem; padding: 0.5rem; }
+.gif-url-input {
+    flex: 1; border: 1px solid var(--border); border-radius: var(--r-sm);
+    padding: 0.3rem 0.6rem; font-size: 0.8rem;
+    background: var(--bg-tint); color: var(--text-primary);
+}
+.gif-url-input:focus { outline: none; border-color: var(--accent); }
+.gif-powered {
+    font-size: 0.65rem; color: var(--text-muted);
+    padding: 0.2rem 0.5rem; border-top: 1px solid var(--border);
+    text-align: right; background: var(--bg-tint);
+}
+
+/* ── Embedded images in post/comment content ─────────────────────────────── */
+.post-image {
+    display: block; max-width: 100%; max-height: 400px;
+    border-radius: var(--r-md); margin: 0.5rem 0;
+    object-fit: contain;
+}
+
 /* ── Post compose modal ──────────────────────────────────────────────────── */
 .modal-overlay {
     position: fixed; inset: 0; z-index: 1000;

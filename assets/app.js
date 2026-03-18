@@ -34,6 +34,10 @@ const state = {
     pulseHasActive: false,    // true when at least one active check exists
 };
 
+// Compose picker state (emoji/GIF popovers in post & comment composers)
+let _composePicker = null;   // { type, textareaId, el }
+let _gifSearchTimer = null;
+
 // ═══════════════════════════════════════════════════════════════════
 // API
 // ═══════════════════════════════════════════════════════════════════
@@ -866,7 +870,7 @@ function renderComposeBubble() {
 }
 
 function renderPostCards(posts, showSpaceBadge = true) {
-    if (!posts.length) {
+    if (!posts?.length) {
         return `<div class="empty-state">
             <div class="empty-state-icon">💬</div>
             <div class="empty-state-title">Nothing here yet</div>
@@ -1134,6 +1138,7 @@ function renderPostDetail(post, space) {
                               placeholder="Add a response… Be specific, be generous. ✨"
                               rows="3"></textarea>
                 </div>
+                ${composeToolbar('comment-input')}
                 ${isInstructor ? `
                 <div style="margin-bottom:0.5rem">
                     <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.825rem;color:var(--text-secondary);cursor:pointer">
@@ -1652,7 +1657,8 @@ function openCompose(defaultType = 'discussion', defaultSpaceId = null) {
         <div class="form-group" id="content-group">
             <label class="form-label" for="post-content">Content</label>
             <textarea class="form-textarea" id="post-content" placeholder="Add context, links, your thinking…" rows="5"></textarea>
-            <div class="form-hint">Supports **bold**, *italic*, and \`code\` formatting.</div>
+            ${composeToolbar('post-content')}
+            <div class="form-hint">Supports **bold**, *italic*, \`code\`, and ![gif](url) images.</div>
         </div>
 
         <div id="type-extras"></div>
@@ -2052,6 +2058,9 @@ document.addEventListener('click', e => {
     if (!e.target.closest('#add-reaction-btn') && !e.target.closest('.emoji-picker')) {
         document.querySelectorAll('.emoji-picker').forEach(p => p.style.display = 'none');
     }
+    if (!e.target.closest('.compose-tool-btn') && !e.target.closest('.compose-picker')) {
+        closeComposePicker();
+    }
 });
 
 // Comment actions
@@ -2087,6 +2096,7 @@ window.showReplyBox = (commentId, postId) => {
         <div style="flex:1">
             <textarea class="composer-textarea" id="reply-input-${commentId}"
                       style="min-height:70px;font-size:0.85rem" placeholder="Reply…"></textarea>
+            ${composeToolbar(`reply-input-${commentId}`)}
             <div style="display:flex;gap:0.4rem;margin-top:0.4rem;justify-content:flex-end">
                 <button class="btn btn-ghost btn-sm" onclick="document.getElementById('reply-box-${commentId}').remove()">Cancel</button>
                 <button class="btn btn-primary btn-sm" onclick="submitReply(${commentId},${postId})">Reply</button>
@@ -2373,7 +2383,15 @@ function esc(str) {
 
 function renderMarkdown(text) {
     if (!text) return '';
-    return esc(text)
+    // Extract image markdown before HTML-escaping so URLs aren't mangled
+    const images = [];
+    const withPlaceholders = text.replace(/!\[([^\]]*)\]\((https:\/\/[^)\s]{4,2000})\)/g, (_, alt, url) => {
+        try { new URL(url); } catch { return ''; }
+        const idx = images.length;
+        images.push(`<img src="${esc(url)}" alt="${esc(alt)}" class="post-image" loading="lazy">`);
+        return `\x00IMG${idx}\x00`;
+    });
+    let result = esc(withPlaceholders)
         // Code blocks
         .replace(/`([^`]+)`/g, '<code>$1</code>')
         // Bold
@@ -2385,6 +2403,9 @@ function renderMarkdown(text) {
         // Double newlines → paragraph breaks
         .replace(/\n\n/g, '</p><p>')
         .replace(/\n/g, '<br>');
+    // Restore images
+    if (images.length) result = result.replace(/\x00IMG(\d+)\x00/g, (_, i) => images[+i]);
+    return result;
 }
 
 function timeAgo(ts) {
@@ -3666,6 +3687,153 @@ async function loadModerationAuditLog() {
     }
 }
 
+// ── Compose Pickers (emoji + GIF) ─────────────────────────────────────────────
+
+const EMOJI_CATS = [
+    { icon: '😊', label: 'Faces', emojis: ['😀','😂','🥹','😊','😍','🤩','😎','🥳','😜','🤔','😮','😢','😡','🥺','🤗','😴','🤯','🥱','😤','🫡','😇','🙃','😉','😌','😘','😋','😛','🤪','🥸','😏'] },
+    { icon: '👋', label: 'Hands', emojis: ['👍','👎','👏','🙌','🤝','🤜','✌️','🤞','🙏','💪','🫶','👌','🤌','☝️','✍️','🤳','🦾','🫱','🫲','👊'] },
+    { icon: '❤️', label: 'Hearts', emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','❤️‍🔥','💔','💕','💞','💓','💗','💖','💘','💝','😻','🫀'] },
+    { icon: '🎉', label: 'Celebrate', emojis: ['🎉','🎊','🎈','🎁','🏆','🥇','⭐','✨','🔥','💡','💯','🚀','🌟','🎯','👀','💬','📝','💻','📚','🎓'] },
+    { icon: '🐶', label: 'Fun', emojis: ['🐶','🐱','🐸','🦊','🐼','🦁','🦋','🌸','🌈','☀️','🌊','❄️','🍕','☕','🎮','🎵','🌿','🍀','🦄','🌙'] },
+];
+
+function composeToolbar(textareaId) {
+    return `<div class="compose-toolbar">
+        <button class="compose-tool-btn" onclick="toggleEmojiComposePicker('${textareaId}',this)" title="Insert emoji">😊</button>
+        <button class="compose-tool-btn gif-tool-btn" onclick="toggleGifPicker('${textareaId}',this)" title="Search &amp; insert GIF">GIF</button>
+    </div>`;
+}
+
+function insertAtCursor(textareaId, text) {
+    const ta = document.getElementById(textareaId);
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end   = ta.selectionEnd;
+    ta.value = ta.value.substring(0, start) + text + ta.value.substring(end);
+    ta.selectionStart = ta.selectionEnd = start + text.length;
+    ta.focus();
+}
+
+function closeComposePicker() {
+    if (_composePicker) { _composePicker.el.remove(); _composePicker = null; }
+}
+
+function positionPicker(el, btn) {
+    const rect = btn.getBoundingClientRect();
+    el.style.position = 'fixed';
+    el.style.zIndex   = '500';
+    // Prefer opening below; flip upward if near bottom of viewport
+    const spaceBelow = window.innerHeight - rect.bottom;
+    if (spaceBelow < 280) {
+        el.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+        el.style.top    = 'auto';
+    } else {
+        el.style.top    = (rect.bottom + 4) + 'px';
+        el.style.bottom = 'auto';
+    }
+    // Prevent overflow on right edge
+    el.style.left = Math.min(rect.left, window.innerWidth - 320) + 'px';
+}
+
+function toggleEmojiComposePicker(textareaId, btn) {
+    if (_composePicker?.type === 'emoji' && _composePicker?.textareaId === textareaId) {
+        closeComposePicker(); return;
+    }
+    closeComposePicker();
+    const el = document.createElement('div');
+    el.className = 'compose-picker emoji-compose-picker';
+    el.innerHTML = `
+        <div class="compose-picker-tabs">
+            ${EMOJI_CATS.map((cat, i) => `
+            <button class="compose-picker-tab${i === 0 ? ' active' : ''}"
+                    onclick="switchEmojiTab(${i},'${textareaId}')" title="${cat.label}">${cat.icon}</button>`).join('')}
+        </div>
+        ${EMOJI_CATS.map((cat, i) => `
+        <div class="compose-picker-grid" id="ep-grid-${i}" style="${i > 0 ? 'display:none' : ''}">
+            ${cat.emojis.map(e => `<span class="emoji-option" onclick="insertAtCursor('${textareaId}','${e}');closeComposePicker()">${e}</span>`).join('')}
+        </div>`).join('')}`;
+    positionPicker(el, btn);
+    document.body.appendChild(el);
+    _composePicker = { type: 'emoji', textareaId, el };
+}
+
+function switchEmojiTab(idx, textareaId) {
+    if (!_composePicker) return;
+    _composePicker.el.querySelectorAll('.compose-picker-tab').forEach((t, i) => t.classList.toggle('active', i === idx));
+    _composePicker.el.querySelectorAll('.compose-picker-grid').forEach((g, i) => g.style.display = i === idx ? '' : 'none');
+}
+
+function toggleGifPicker(textareaId, btn) {
+    if (_composePicker?.type === 'gif' && _composePicker?.textareaId === textareaId) {
+        closeComposePicker(); return;
+    }
+    closeComposePicker();
+    const el = document.createElement('div');
+    el.className = 'compose-picker gif-compose-picker';
+    el.innerHTML = `
+        <div class="gif-search-bar">
+            <input class="gif-search-input" type="text" placeholder="Search GIFs…"
+                   oninput="scheduleGifSearch(this.value,'${textareaId}')"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();searchGifs(this.value,'${textareaId}')}">
+        </div>
+        <div class="gif-results" id="gif-results">
+            <div class="gif-url-row">
+                <input class="gif-url-input" type="url" id="gif-url-input" placeholder="…or paste a GIF URL">
+                <button class="btn btn-primary btn-sm" onclick="insertGifUrl('${textareaId}')">Insert</button>
+            </div>
+        </div>
+        <div class="gif-powered">Powered by GIPHY</div>`;
+    positionPicker(el, btn);
+    document.body.appendChild(el);
+    _composePicker = { type: 'gif', textareaId, el };
+    // Auto-focus search
+    el.querySelector('.gif-search-input')?.focus();
+}
+
+function scheduleGifSearch(q, textareaId) {
+    clearTimeout(_gifSearchTimer);
+    if (!q.trim()) return;
+    _gifSearchTimer = setTimeout(() => searchGifs(q, textareaId), 400);
+}
+
+async function searchGifs(q, textareaId) {
+    if (!q.trim() || !_composePicker) return;
+    const resultsEl = _composePicker.el.querySelector('#gif-results');
+    if (!resultsEl) return;
+    resultsEl.innerHTML = '<div class="gif-loading">Searching…</div>';
+    try {
+        const data = await api.get(`/api/gif-search?q=${encodeURIComponent(q)}`);
+        if (!_composePicker) return; // closed while fetching
+        if (!data.results?.length) {
+            const msg = data.has_api_key === false
+                ? 'GIF search requires a Giphy API key (set GIPHY_API_KEY). Paste a URL instead:'
+                : 'No GIFs found. Try another search or paste a URL:';
+            resultsEl.innerHTML = `<div class="gif-no-results">${msg}</div>
+                <div class="gif-url-row">
+                    <input class="gif-url-input" type="url" id="gif-url-input" placeholder="…or paste a GIF URL">
+                    <button class="btn btn-primary btn-sm" onclick="insertGifUrl('${textareaId}')">Insert</button>
+                </div>`;
+            return;
+        }
+        resultsEl.innerHTML = `<div class="gif-grid">
+            ${data.results.map(g => `
+            <img class="gif-item" src="${esc(g.preview)}" alt="${esc(g.title)}"
+                 loading="lazy" onclick="insertAtCursor('${textareaId}','![gif](${g.url})');closeComposePicker()">`).join('')}
+        </div>`;
+    } catch {
+        if (_composePicker) resultsEl.innerHTML = '<div class="gif-no-results">Search failed. Paste a GIF URL instead.</div>';
+    }
+}
+
+function insertGifUrl(textareaId) {
+    const input = document.getElementById('gif-url-input');
+    const url   = input?.value.trim();
+    if (!url) { toast('Please enter a GIF URL'); return; }
+    try { new URL(url); } catch { toast('Please enter a valid URL'); return; }
+    insertAtCursor(textareaId, `![gif](${url})`);
+    closeComposePicker();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Make key functions global for inline handlers
@@ -3688,6 +3856,14 @@ window.performModAction = performModAction;
 window.quickModAction   = quickModAction;
 window.dismissFlags     = dismissFlags;
 window.loadModerationAuditLog = loadModerationAuditLog;
+window.toggleEmojiComposePicker = toggleEmojiComposePicker;
+window.toggleGifPicker          = toggleGifPicker;
+window.switchEmojiTab           = switchEmojiTab;
+window.insertAtCursor           = insertAtCursor;
+window.closeComposePicker       = closeComposePicker;
+window.scheduleGifSearch        = scheduleGifSearch;
+window.searchGifs               = searchGifs;
+window.insertGifUrl             = insertGifUrl;
 
 // ── Invite Codes (instructor, standalone courses only) ─────────────
 

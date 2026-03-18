@@ -64,6 +64,11 @@ define('SMTP_PASS', getenv('SMTP_PASS') ?: '');
 // Leave empty to disable the admin panel entirely.
 define('ADMIN_PASSWORD', getenv('ADMIN_PASSWORD') ?: '');
 
+// ── GIF Search (optional) ─────────────────────────────────────────────────────
+// Get a free Giphy API key at https://developers.giphy.com/
+// Leave empty to disable GIF search (users can still paste GIF URLs directly).
+define('GIPHY_API_KEY', getenv('GIPHY_API_KEY') ?: '');
+
 // ── Developer Mode ───────────────────────────────────────────────────────────
 // Set DEV_MODE=true to bypass LTI authentication and use a simulated user.
 // NEVER enable this in production.

@@ -215,6 +215,9 @@ function route(string $method, array $seg, array $body): void {
         $s === 'pulse-public' && ($seg[1] ?? '') && $sub && ($seg[3] ?? '') => handlePublicPulseAction($seg[1] ?? '', (int)$sub, $seg[3] ?? '', $body),
         $s === 'pulse-public' && ($seg[1] ?? '') && !$sub      => handlePublicPulse($seg[1] ?? ''),
 
+        // GIF search proxy (Tenor API)
+        $s === 'gif-search' && $method === 'GET'               => handleGifSearch(),
+
         default => jsonError(404, 'Not found'),
     };
 }
@@ -1691,6 +1694,37 @@ function handleModerationLog(): void {
     unset($row);
 
     json($rows);
+}
+
+// ── GIF Search ────────────────────────────────────────────────────────────────
+
+function handleGifSearch(): void {
+    requireAuth();
+    $q = trim($_GET['q'] ?? '');
+    if (!$q || !defined('GIPHY_API_KEY') || !GIPHY_API_KEY) {
+        json(['results' => [], 'has_api_key' => !!(defined('GIPHY_API_KEY') && GIPHY_API_KEY)]);
+        return;
+    }
+    $url = 'https://api.giphy.com/v1/gifs/search?' . http_build_query([
+        'q'       => $q,
+        'api_key' => GIPHY_API_KEY,
+        'limit'   => 20,
+        'rating'  => 'g',
+        'lang'    => 'en',
+    ]);
+    $ctx  = stream_context_create(['http' => ['timeout' => 5, 'ignore_errors' => true]]);
+    $resp = @file_get_contents($url, false, $ctx);
+    if (!$resp) { json(['results' => [], 'has_api_key' => true]); return; }
+    $data = json_decode($resp, true);
+    $results = [];
+    foreach ($data['data'] ?? [] as $r) {
+        $gifUrl  = $r['images']['original']['url']      ?? '';
+        $preview = $r['images']['fixed_height']['url']  ?? $gifUrl;
+        if ($gifUrl) {
+            $results[] = ['url' => $gifUrl, 'preview' => $preview, 'title' => $r['title'] ?? ''];
+        }
+    }
+    json(['results' => $results, 'has_api_key' => true]);
 }
 
 // ── Invite Codes ──────────────────────────────────────────────────────────────
